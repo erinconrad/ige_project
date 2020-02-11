@@ -303,7 +303,7 @@ end
 p = 24;
 dur = parameter(p).name;
 [pval,~,stats] = ranksum(new_table.(dur)(dr_row_logical),new_table.(dur)(~dr_row_logical));
-parameter(p).stats.pval = pval;
+parameter(p).stats.p = pval;
 parameter(p).stats.other = stats;
 parameter(p).stats.avg_dur = [nanmean(new_table.(dur)(dr_row_logical)),nanmean(new_table.(dur)(~dr_row_logical))];
 
@@ -328,43 +328,50 @@ cat_cols = pred_cat;
 response_vec = logical(response_vec-1);
 
 
-% Fit a binomial logistic regression model
-mdl = fitglm(predictor_array,response_vec,... % the first argument is the predictor, 2nd is the response
-    'linear','Distribution','binomial','link','logit',... % establish that it's binomial
-    'Categorical',logical(cat_cols)); % tell it which predictors are categorical
+%% Output variables to a csv file, to be read in R for FIRTH logistic regression logistf
 
-
-%% Test the multivariate analysis with fake data
-%{
-    IT DOESN'T WORK
-When I make the sex predictor variable a near perfect fit, it says
-the pvalue for that coefficient is 0.9999
-%}
-
-predictor_fake = predictor_array;
-
-% Let's make sex a perfect predictor, so 1 iff resistant
-predictor_fake(:,1) = 0;
-predictor_fake(response_vec,1) = 1;
-
-% Add some jitter so not totally perfect (breaks the model)
-predictor_fake(1:5,1) = zeros(5,1);
-predictor_fake(6:10,1) = ones(5,1);
-
-% confirm via chi2 this works
-[tbl_fake,chi2_fake,pval_fake,labels_fake] = crosstab(response_vec,...
-        predictor_fake(:,1));
-
-% Do the model with just sex
-fake_mdl = fitglm(predictor_fake(:,1),response_vec,...
-    'linear','Distribution','binomial','link','logit',...
-    'Categorical',logical(1));
-% This works, very low p value
     
-% Do the model with all variables
-fake_mdl = fitglm(predictor_fake,response_vec,... % the first argument is the predictor, 2nd is the response
+%% Multivariate analysis where we only include variables with p < 0.2 for univariate stats
+% Find variables with p < 0.2
+keep_predictors = zeros(length(predictors),1);
+for i = 1:length(predictors)
+    
+    % if no p value, don't include it
+    if isfield(parameter(predictors(i)).stats,'p') == 0
+        continue;
+    end
+    
+    % Get the pvalue
+    pval = parameter(predictors(i)).stats.p;
+    
+    % Keep it if the p value is < 0.2
+    if pval < 0.2
+        keep_predictors(i) = 1;
+    end
+    
+end
+
+keep_predictors = logical(keep_predictors);
+
+
+% Show the variable names
+fprintf('\n\nPredictors included in the model:\n');
+for i = 1:length(predictors)
+    if keep_predictors(i) == 1
+        fprintf('%s, p = %1.3f\n',parameter(predictors(i)).name,...
+            parameter(predictors(i)).stats.p);
+    end
+end
+
+% Do the model
+mdl = fitglm(predictor_array(:,keep_predictors),response_vec,... % the first argument is the predictor, 2nd is the response
     'linear','Distribution','binomial','link','logit',... % establish that it's binomial
-    'Categorical',logical(cat_cols)); % tell it which predictors are categorical
-% This doesn't work, p value near 1
+    'Categorical',logical(cat_cols(keep_predictors))); % tell it which predictors are categorical
+mdl
+
+mdl = fitglm(predictor_array(:,[2 5]),response_vec,... % the first argument is the predictor, 2nd is the response
+    'linear','Distribution','binomial','link','logit',... % establish that it's binomial
+    'Categorical',logical(cat_cols([2 5]))); 
+
 
 end
