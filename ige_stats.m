@@ -41,6 +41,7 @@ parameter(29).name = 'glvfa';
 parameter(30).name = 'slow';
 parameter(31).name = 'foc_dis';
 parameter(32).name = 'foc_slow';
+parameter(33).name = 'age_at_eeg';
 
 % tell it which parameters are the awake version of the one below it
 eeg_parameters = [7:22,25:32];
@@ -59,7 +60,8 @@ end
 
 
 %% File path
-csv_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/IGEDatabase-DeidentifiedData_DATA_2020-02-10_1514.csv";
+csv_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/IGEDatabase-DeidentifiedData_DATA_2020-02-15_1610.csv";
+r_file_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/data_for_r.csv";
 
 %% Load csv file
 data = readtable(csv_path);
@@ -68,6 +70,7 @@ data = readtable(csv_path);
 new_col = 1;
 for i = 1:length(parameter)
     parameter(i).column = find(strcmp(data.Properties.VariableNames,parameter(i).name));
+
     if isempty(parameter(i).column) == 1
         if i >= 24
             parameter(i).column = size(data,2)+new_col;
@@ -77,7 +80,8 @@ for i = 1:length(parameter)
         end
     end
 end
-feature_cols = parameter(7).column:parameter(22).column; 
+feature_cols = parameter(7).column:parameter(22).column;
+age_eeg_col = parameter(33).column;
 %{
 sleep_col = find(strcmp(data.Properties.VariableNames,'sleep')); 
 duration_col = find(strcmp(data.Properties.VariableNames,'eeg_duration')); 
@@ -182,6 +186,10 @@ for i = 1:size(data,1)-1
             new_table{i,j} = 0;
         end
     end
+
+    % Get age at first eeg
+    curr_col = table2array(data(curr_eeg_rows,age_eeg_col));
+    new_table{i,age_eeg_col} = min(curr_col);
     
     % now concatenate sleep and wake for new columns
     count = 0;
@@ -245,35 +253,153 @@ new_table(logical(eeg_row),:) = [];
 exclude = any([new_table.exclude_clinical___0==1,...
     new_table.exclude_eeg___0 == 1],2);
 
-%% Univariate stats
-% Get if drug resistant
-dr_row = new_table.drug_resistant;
-dr_row_logical = dr_row == 1;
+% Remove exclusion rows
+new_table(exclude,:) = [];
 
+fprintf('Excluded %d EEGs per criteria.\n',sum(exclude));
+
+%% check for and remove zero duration eegs
+zero_duration = find(new_table.duration_minutes == 0);
+for i = 1:length(zero_duration)
+    fprintf('\nWarning, record ID %d with zero duration. Removing...\n',...
+        new_table.record_id(zero_duration(i)));
+end
+new_table(zero_duration,:) = [];
+
+%% Redefine drug resistance to be 1 or 0
+
+% In the Redcap table, drug_resistant = 2 means responsive, 1 means
+% resistant, so now 1 means responsive, 0 means resistant
+new_table.drug_resistant = new_table.drug_resistant - 1;
+
+% So flip it so now 1 means resistant, 0 means responsive
+new_table.drug_resistant = ~new_table.drug_resistant;
+
+%% See if any nans for drug resistant
+dr_nan = find(isnan(new_table.drug_resistant));
+if isempty(dr_nan) == 0
+    for i = 1:length(dr_nan)
+        fprintf('\nDrug resistance is nan for record id %d.\n',new_table.record_id(dr_nan(i)));
+    end
+end
+
+%% Print some random rows to test that I didn't mess up
+if 0
+    for i = 1:10
+        r = randi(size(new_table,1));
+        new_table(r,:)
+    end
+end
+
+%% Wilcoxon rank sums for duration and age at first eeg
+for pdur = [24 33]
+    name = parameter(pdur).name;
+    [pval,~,stats] = ranksum(new_table.(name)(new_table.drug_resistant == 1),...
+        new_table.(name)(new_table.drug_resistant == 0));
+
+    parameter(pdur).stats.p = pval;
+    parameter(pdur).stats.other = stats;
+    parameter(pdur).stats.avg_dur = [nanmean(new_table.(name)(new_table.drug_resistant == 1)),...
+        nanmean(new_table.(name)(new_table.drug_resistant == 0))];
+    fprintf(['\nAverage %s is %1.1f m for drug resistant patients and \n'...
+        '%1.1f m for drug responsive patients (Wilcoxon rank sum: p = %1.3f).\n'],...
+        name,parameter(pdur).stats.avg_dur(1),parameter(pdur).stats.avg_dur(2),parameter(pdur).stats.p);
+    
+end
+
+% Also loop through and do WRSs for other parameters
+for p = 25:32
+    % get appropriate column
+    name = parameter(p).name;
+    
+    % Get number who have parameter
+    par = new_table.(name);
+    
+    if sum(par) == 0, continue; end
+    
+    [pval,~,stats] = ranksum(new_table.duration_minutes(par == 1),...
+    new_table.duration_minutes(par == 0));
+
+    fprintf(['\nAverage duration is %1.1f m for patients with %s and \n'...
+    '%1.1f m for patients without %s (Wilcoxon rank sum: p = %1.3f).\n'],...
+    nanmean(new_table.duration_minutes(par == 1)),name,...
+    nanmean(new_table.duration_minutes(par == 0)),name,pval);
+end
+
+%% Figure for percentage of patients with feature at different durations
+% X axis is duration of eeg
+% Y axis is number of patients whose eeg is that duration or lower who have
+% the feature of interest
+figure
+set(gcf,'position',[200 300 1200 500])
+ax1 = subplot(1,2,1);
+ax2 = subplot(1,2,2);
+legend_names = {};
+for p = 25:29
+    % get appropriate column
+    name = parameter(p).name;
+    legend_names = [legend_names,name];
+    
+    % Get number who have parameter
+    par = new_table.(name);
+    
+    % Get duration
+    dur = new_table.duration_minutes;
+    
+    % Define duration step size
+    dur_steps = 0:20:max(dur);
+    n_par_dur = zeros(1,length(dur_steps));
+    perc_par_dur = zeros(1,length(dur_steps));
+    
+    % Loop through duratio steps
+    for d = 1:length(dur_steps)
+        
+        % Get the number of patients who have parameter and have duration
+        % less than or equal to specified duration
+        n_par_dur(d) = sum(par(dur<=dur_steps(d)));
+        
+        % Get the percentage of patients who have parameter within that
+        % specified duration (divide by the total number with that
+        % parameter)
+        perc_par_dur(d) = sum(par(dur<=dur_steps(d)))/sum(par)*100;
+    end
+    axes(ax1)
+    plot(dur_steps/60,n_par_dur,'linewidth',2)
+    hold on
+    
+    axes(ax2)
+    plot(dur_steps/60,perc_par_dur,'linewidth',2)
+    hold on
+end
+axes(ax1)
+xlabel('EEG duration (hours)')
+ylabel('Number of patients with feature');
+legend(legend_names)
+set(gca,'fontsize',20)
+
+axes(ax2)
+xlabel('EEG duration (hours)')
+ylabel('Percentage of patients with feature');
+legend(legend_names)
+set(gca,'fontsize',20)
+
+
+%% Categoricla Univariate stats
 % Loop through categorical parameters of interest
 for p = [3:5,eeg_parameters]
     
     % get appropriate column
     name = parameter(p).name;
     
-    % Get number who are resistant and number who have parameter
-    resistant = new_table.drug_resistant;
+    % Get number who have parameter
     par = new_table.(name);
     
-    % Find rows with nans or rows where resistant == 3
-    nan_rows = any([isnan(resistant),isnan(par)],2);
-    res_3_rows = resistant == 3;
-    
-    % summary of all unallowed rows
-    all_unallowed = nan_rows|exclude|res_3_rows;
-     
-    
     % do chi squared
-    [tbl,chi2,pval,labels] = crosstab(resistant(~all_unallowed),...
-        par(~all_unallowed));
+    [tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant,...
+        par);
     
     % Don't do the analysis if all par is 0
-    if length(unique(par(~all_unallowed))) == 1
+    if length(unique(par)) == 1
         parameter(p).stats.tbl = tbl;
         parameter(p).stats.other = nan;
         continue
@@ -288,6 +414,7 @@ for p = [3:5,eeg_parameters]
         parameter(p).stats.OddsRatio = stats.OddsRatio;
         parameter(p).stats.ConfidenceInterval = stats.ConfidenceInterval;
     else
+        fprintf('\nNote that I am doing chi2 test for %s.\n',parameter(p).name);
         parameter(p).stats.tbl = tbl;
         parameter(p).stats.chi2 = chi2;
         parameter(p).stats.p = pval;
@@ -299,79 +426,86 @@ for p = [3:5,eeg_parameters]
     
 end
 
-% Wilcoxon rank sum for duration
-p = 24;
-dur = parameter(p).name;
-[pval,~,stats] = ranksum(new_table.(dur)(dr_row_logical),new_table.(dur)(~dr_row_logical));
-parameter(p).stats.p = pval;
-parameter(p).stats.other = stats;
-parameter(p).stats.avg_dur = [nanmean(new_table.(dur)(dr_row_logical)),nanmean(new_table.(dur)(~dr_row_logical))];
+%% Table 1
+
+
+%% Make a summary table of univariate statistics for eeg features
+all_names = {};
+all_p_value = [];
+all_stat = [];
+all_n_resistant = [];
+all_n_responsive = [];
+
+all_perc_resistant = [];
+all_perc_responsive = [];
+
+for p = 25:32
+    if strcmp(parameter(p).name,'duration_minutes') == 1, continue; end
+    if strcmp(parameter(p).name,'sex') == 1, continue; end
+    
+    if isfield(parameter(p).stats,'p') == 0
+        continue
+    end
+    
+    all_names = [all_names;parameter(p).name];
+    all_p_value = [all_p_value;parameter(p).stats.p];
+    all_stat = [all_stat;parameter(p).stats.OddsRatio];
+    %{
+    if isfield(parameter(p).stats,'OddsRatio')
+        all_stat = [all_stat;parameter(p).stats.OddsRatio];
+    elseif isfield(parameter(p).stats,'chi2')
+        all_stat = [all_stat;parameter(p).stats.chi2];
+    end
+    %}
+    
+    all_n_resistant = [all_n_resistant;parameter(p).stats.tbl(2,2)];
+    all_n_responsive = [all_n_responsive;parameter(p).stats.tbl(1,2)];
+    
+    all_perc_resistant = [all_perc_resistant;parameter(p).stats.tbl(2,2)/...
+        (parameter(p).stats.tbl(2,2)+parameter(p).stats.tbl(2,1))];
+    all_perc_responsive = [all_perc_responsive;parameter(p).stats.tbl(1,2)/...
+        (parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(1,1))];
+    
+end
+
+str_resistant = cell(length(all_n_resistant),1);
+str_responsive = cell(length(all_n_resistant),1);
+
+for i = 1:length(all_n_resistant)
+    str_resistant{i} = sprintf('%d (%1.1f%%)',all_n_resistant(i),all_perc_resistant(i)*100);
+    str_responsive{i} = sprintf('%d (%1.1f%%)',all_n_responsive(i),all_perc_responsive(i)*100);
+end
+
+table(all_names,str_responsive,str_resistant,all_stat,all_p_value,...
+    'VariableNames',{'Feature','Responsive','Resistant',...
+    'OddsRatio','PValue'})
+
 
 %% Multivariate analysis
-% Get columns corresponding to response and predictor variables
-response_col = parameter(response).column;
-predictor_col = [];
-for i = 1:length(predictors)
-    predictor_col = [predictor_col,parameter(predictors(i)).column];
-end
-
-% Make new table with just the response and predictors, removing unallowed
-% rows
-tbl_for_mult = new_table(~all_unallowed,[response_col, predictor_col]);
-
-% Convert things to arrays to make it friendly for the model
-response_vec = table2array(tbl_for_mult(:,1));
-predictor_array = table2array(tbl_for_mult(:,2:end));
-cat_cols = pred_cat;
-
-% Make response vector binary (right now it's 1s and 2s)
-response_vec = logical(response_vec-1);
-
-
-%% Output variables to a csv file, to be read in R for FIRTH logistic regression logistf
-
-    
-%% Multivariate analysis where we only include variables with p < 0.2 for univariate stats
-% Find variables with p < 0.2
-keep_predictors = zeros(length(predictors),1);
-for i = 1:length(predictors)
-    
-    % if no p value, don't include it
-    if isfield(parameter(predictors(i)).stats,'p') == 0
-        continue;
-    end
-    
-    % Get the pvalue
-    pval = parameter(predictors(i)).stats.p;
-    
-    % Keep it if the p value is < 0.2
-    if pval < 0.2
-        keep_predictors(i) = 1;
-    end
-    
-end
-
-keep_predictors = logical(keep_predictors);
-
-
-% Show the variable names
-fprintf('\n\nPredictors included in the model:\n');
-for i = 1:length(predictors)
-    if keep_predictors(i) == 1
-        fprintf('%s, p = %1.3f\n',parameter(predictors(i)).name,...
-            parameter(predictors(i)).stats.p);
-    end
-end
-
-% Do the model
-mdl = fitglm(predictor_array(:,keep_predictors),response_vec,... % the first argument is the predictor, 2nd is the response
-    'linear','Distribution','binomial','link','logit',... % establish that it's binomial
-    'Categorical',logical(cat_cols(keep_predictors))); % tell it which predictors are categorical
+new_table.drug_resistant = logical(new_table.drug_resistant); % convert dr to logical
+mdl = fitglm(new_table,'drug_resistant~gsw+psw+pst+gpfa+glvfa+foc_dis+foc_slow+duration_minutes',...
+    'Distribution','binomial','CategoricalVars',{'gsw','psw','pst',...
+    'gpfa','glvfa','foc_dis','foc_slow'});
 mdl
 
-mdl = fitglm(predictor_array(:,[2 5]),response_vec,... % the first argument is the predictor, 2nd is the response
-    'linear','Distribution','binomial','link','logit',... % establish that it's binomial
-    'Categorical',logical(cat_cols([2 5]))); 
+% Simpler model
+mdl2 = fitglm(new_table,'drug_resistant~pst+duration_minutes',...
+    'Distribution','binomial','CategoricalVars',{'pst'});
+mdl2
+
+
+% Try taking the log the length of EEG
+duration_log = log(new_table.duration_minutes);
+new_table = addvars(new_table,duration_log);
+
+mdl3 = fitglm(new_table,'drug_resistant~pst+duration_log',...
+    'Distribution','binomial','CategoricalVars',{'pst'});
+mdl3
+
+%% Output variables to a csv file, to be read in R for FIRTH logistic regression using logistf
+writetable(new_table,r_file_path);
+    
+
 
 
 end
