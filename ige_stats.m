@@ -2,11 +2,8 @@ function parameter = ige_stats
 
 %% Parameters
 
-% simplify model
-simple_model = 1; % if 1, this will remove focal features, slowing, and concatenate wake and sleep
-
 % minimum number of elements in any cell of contingency table to do chi2
-min_num_fisher = 10;
+min_num_fisher = 20; % This is very conservative
 
 % Establish relevant parameters
 parameter(1).name = 'drug_resistant';
@@ -48,20 +45,10 @@ eeg_parameters = [7:22,25:32];
 awake_parameters = [7:2:21];
 summary_parameters = [25:32];
 
-% Select parameters to put in multivariate analysis
-response = 1; % drug resistance is response variable (binary)
-if simple_model == 1
-    predictors = [3,24,25:29]; % sex, sw/psw/pst/gpfa/glvfa, duration
-    pred_cat = [1,0,ones(1,length(predictors)-2)];
-else
-    predictors = [3,7:22,24]; % sex, all eeg features, duration
-    pred_cat = [ones(1,length(predictors)-1),0]; % all categorical except duration
-end
-
-
 %% File path
-csv_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/IGEDatabase-DeidentifiedData_DATA_2020-02-15_1610.csv";
+csv_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/IGEDatabase-DeidentifiedData_DATA_2020-02-20_2017.csv";
 r_file_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/data_for_r.csv";
+results_folder = '/Users/erinconrad/Desktop/residency stuff/R25/ige project/results/';
 
 %% Load csv file
 data = readtable(csv_path);
@@ -82,15 +69,7 @@ for i = 1:length(parameter)
 end
 feature_cols = parameter(7).column:parameter(22).column;
 age_eeg_col = parameter(33).column;
-%{
-sleep_col = find(strcmp(data.Properties.VariableNames,'sleep')); 
-duration_col = find(strcmp(data.Properties.VariableNames,'eeg_duration')); 
-exclude_eeg_col = find(strcmp(data.Properties.VariableNames,'exclude_eeg___0'));  
-sex_col = find(strcmp(data.Properties.VariableNames,'sex'));
-dr_col = find(strcmp(data.Properties.VariableNames,'drug_resistant'));
-vpa_col = find(strcmp(data.Properties.VariableNames,'vpa'));
-feature_cols = duration_col+1:duration_col+16; 
-%}
+
 
 %% Prep new table
 new_table = data;
@@ -198,7 +177,7 @@ for i = 1:size(data,1)-1
         
         % get the columns corresponding to this AND the sleep version
         curr_cols = table2array(data(curr_eeg_rows,...
-            parameter(j).column:parameter(j).column+1));
+            parameter(j).column:parameter(j+1).column));
         
         % for testing
         if 0
@@ -249,7 +228,7 @@ end
 new_table(logical(eeg_row),:) = [];
 
 
-%% Identify exclusion rows
+%% Identify and remove exclusion rows
 exclude = any([new_table.exclude_clinical___0==1,...
     new_table.exclude_eeg___0 == 1],2);
 
@@ -258,7 +237,7 @@ new_table(exclude,:) = [];
 
 fprintf('Excluded %d EEGs per criteria.\n',sum(exclude));
 
-%% check for and remove zero duration eegs
+%% Identify and remove zero duration eegs (ideally shouldn't have these)
 zero_duration = find(new_table.duration_minutes == 0);
 for i = 1:length(zero_duration)
     fprintf('\nWarning, record ID %d with zero duration. Removing...\n',...
@@ -267,7 +246,6 @@ end
 new_table(zero_duration,:) = [];
 
 %% Redefine drug resistance to be 1 or 0
-
 % In the Redcap table, drug_resistant = 2 means responsive, 1 means
 % resistant, so now 1 means responsive, 0 means resistant
 new_table.drug_resistant = new_table.drug_resistant - 1;
@@ -275,7 +253,7 @@ new_table.drug_resistant = new_table.drug_resistant - 1;
 % So flip it so now 1 means resistant, 0 means responsive
 new_table.drug_resistant = ~new_table.drug_resistant;
 
-%% See if any nans for drug resistant
+%% See if any nans for drug resistant (there shouldn't be)
 dr_nan = find(isnan(new_table.drug_resistant));
 if isempty(dr_nan) == 0
     for i = 1:length(dr_nan)
@@ -291,12 +269,23 @@ if 0
     end
 end
 
+%{
+********************************
+Now do some statistics
+********************************
+%}
+
 %% Wilcoxon rank sums for duration and age at first eeg
 for pdur = [24 33]
     name = parameter(pdur).name;
     [pval,~,stats] = ranksum(new_table.(name)(new_table.drug_resistant == 1),...
         new_table.(name)(new_table.drug_resistant == 0));
-
+    [pval_alt,~,U] = ranksum_output_u(new_table.(name)(new_table.drug_resistant == 1),...
+        new_table.(name)(new_table.drug_resistant == 0));
+    
+    if pval ~= pval_alt, error('what\n'); end
+    
+    parameter(pdur).stats.U = U;
     parameter(pdur).stats.p = pval;
     parameter(pdur).stats.other = stats;
     parameter(pdur).stats.avg_dur = [nanmean(new_table.(name)(new_table.drug_resistant == 1)),...
@@ -308,6 +297,8 @@ for pdur = [24 33]
 end
 
 % Also loop through and do WRSs for other parameters
+duration_feature_table = cell2table(cell(0,5),'VariableNames',{'Feature',...
+    'AverageDurationWithFeature','AverageDurationWithoutFeature','U','p'});
 for p = 25:32
     % get appropriate column
     name = parameter(p).name;
@@ -319,23 +310,62 @@ for p = 25:32
     
     [pval,~,stats] = ranksum(new_table.duration_minutes(par == 1),...
     new_table.duration_minutes(par == 0));
+    [alt_pval,~,U] = ranksum_output_u(new_table.duration_minutes(par == 1),...
+    new_table.duration_minutes(par == 0));
 
-    fprintf(['\nAverage duration is %1.1f m for patients with %s and \n'...
-    '%1.1f m for patients without %s (Wilcoxon rank sum: p = %1.3f).\n'],...
-    nanmean(new_table.duration_minutes(par == 1)),name,...
-    nanmean(new_table.duration_minutes(par == 0)),name,pval);
+    if isequal(pval,alt_pval) == 0, error('what\n'); end
+
+    duration_feature_table = [duration_feature_table;...
+        cell2table({name,nanmean(new_table.duration_minutes(par == 1)),...
+        nanmean(new_table.duration_minutes(par == 0)),U,pval},'VariableNames',{'Feature',...
+    'AverageDurationWithFeature','AverageDurationWithoutFeature','U','p'})];
+
+    if 0
+        fprintf(['\nAverage duration is %1.1f m for patients with %s and \n'...
+        '%1.1f m for patients without %s (Wilcoxon rank sum: p = %1.3f).\n'],...
+        nanmean(new_table.duration_minutes(par == 1)),name,...
+        nanmean(new_table.duration_minutes(par == 0)),name,pval);
+    end
 end
 
+% Reformat table
+duration_feature_table.Feature{1} = 'GSW';
+duration_feature_table.Feature{2} = 'PSW';
+duration_feature_table.Feature{3} = 'PST';
+duration_feature_table.Feature{4} = 'GPFA';
+duration_feature_table.Feature{5} = 'GLVFA';
+duration_feature_table.Feature{6} = 'Focal discharges';
+duration_feature_table.Feature{7} = 'Focal slowing';
+duration_feature_table.AverageDurationWithFeature = ...
+    arrayfun(@(x)sprintf('%1.1f',x),duration_feature_table.AverageDurationWithFeature,'UniformOutput',false);
+duration_feature_table.AverageDurationWithoutFeature = ...
+    arrayfun(@(x)sprintf('%1.1f',x),duration_feature_table.AverageDurationWithoutFeature,'UniformOutput',false);
+duration_feature_table.p = arrayfun(@(x)sprintf('%1.3f',x),duration_feature_table.p,'UniformOutput',false);
+
+%duration_feature_table.Properties.VariableNames{'AverageDurationWithFeature'} = 'Duration with feature';
+%duration_feature_table.Properties.VariableNames{'AverageDurationWithoutFeature'} = 'Duration without feature';
+%duration_feature_table.Properties.VariableNames{'p'} = 'p value';
+
+
+if 0
 %% Figure for percentage of patients with feature at different durations
 % X axis is duration of eeg
 % Y axis is number of patients whose eeg is that duration or lower who have
 % the feature of interest
-figure
-set(gcf,'position',[200 300 1200 500])
-ax1 = subplot(1,2,1);
-ax2 = subplot(1,2,2);
+fig1 = figure;
+set(fig1,'position',[100 416 600 384])
+
+fig2 = figure;
+set(fig2,'position',[100 416 600 384])
 legend_names = {};
-for p = 25:29
+
+features_to_plot = 25:29;
+
+dur_short = zeros(length(features_to_plot),1);
+count = 0;
+for p = features_to_plot
+    count = count + 1;
+    
     % get appropriate column
     name = parameter(p).name;
     legend_names = [legend_names,name];
@@ -351,7 +381,7 @@ for p = 25:29
     n_par_dur = zeros(1,length(dur_steps));
     perc_par_dur = zeros(1,length(dur_steps));
     
-    % Loop through duratio steps
+    % Loop through duration steps
     for d = 1:length(dur_steps)
         
         % Get the number of patients who have parameter and have duration
@@ -363,30 +393,38 @@ for p = 25:29
         % parameter)
         perc_par_dur(d) = sum(par(dur<=dur_steps(d)))/sum(par)*100;
     end
-    axes(ax1)
-    plot(dur_steps/60,n_par_dur,'linewidth',2)
-    hold on
-    
-    axes(ax2)
+    figure(fig1)
     plot(dur_steps/60,perc_par_dur,'linewidth',2)
     hold on
+    
+    % Compare less than 23 hour EEGs
+    dur_short(count) = sum(par(dur<=12*60))/sum(par)*100;
+    
 end
-axes(ax1)
-xlabel('EEG duration (hours)')
-ylabel('Number of patients with feature');
-legend(legend_names)
-set(gca,'fontsize',20)
 
-axes(ax2)
+figure(fig1)
 xlabel('EEG duration (hours)')
 ylabel('Percentage of patients with feature');
-legend(legend_names)
+legend(legend_names,'location','southeast')
 set(gca,'fontsize',20)
+print(fig1,[results_folder,'Figure1'],'-depsc')
+close(fig1)
+
+figure(fig2)
+bar(dur_short)
+xticklabels(legend_names)
+set(gca,'fontsize',20)
+xlabel('EEG feature')
+ylabel({'Percentage of patients with feature';'who have it in <24 hours'});
+end
 
 
 %% Categoricla Univariate stats
 % Loop through categorical parameters of interest
 for p = [3:5,eeg_parameters]
+    
+    % Note that male == 1, female == 0
+    % Treid VPA == 1, not tried VPA == 0
     
     % get appropriate column
     name = parameter(p).name;
@@ -400,7 +438,7 @@ for p = [3:5,eeg_parameters]
     
     % Don't do the analysis if all par is 0
     if length(unique(par)) == 1
-        parameter(p).stats.tbl = tbl;
+        parameter(p).stats.tbl = [tbl,[0;0]];
         parameter(p).stats.other = nan;
         continue
     end
@@ -409,6 +447,7 @@ for p = [3:5,eeg_parameters]
     % exact test instead
     if any(tbl(:)) <= min_num_fisher
         [~,pval,stats] = fishertest(tbl);
+        parameter(p).stats.labels = labels;
         parameter(p).stats.tbl = tbl;
         parameter(p).stats.p = pval;
         parameter(p).stats.OddsRatio = stats.OddsRatio;
@@ -427,7 +466,131 @@ for p = [3:5,eeg_parameters]
 end
 
 %% Table 1
+% This will be long and ugly
 
+% Total number
+clinical_table = cell2table({'TotalNumber',sprintf('%d (%1.1f%%)',...
+    sum(new_table.drug_resistant == 0),...
+    sum(new_table.drug_resistant == 0)/(sum(new_table.drug_resistant == 0)+sum(new_table.drug_resistant == 1))*100),...
+    sprintf('%d (%1.1f%%)',...
+    sum(new_table.drug_resistant == 1),...
+    sum(new_table.drug_resistant == 1)/(sum(new_table.drug_resistant == 0)+sum(new_table.drug_resistant == 1))*100),'',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'});
+
+% Sex
+clinical_table = [clinical_table;cell2table({'Sex','','','',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+p = 3;
+
+clinical_table = [clinical_table;cell2table({'Men',...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(1,2),...
+    parameter(p).stats.tbl(1,2)/(parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(2,2))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,2),...
+    parameter(p).stats.tbl(2,2)/(parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(2,2))*100),...
+    sprintf('%1.2f',parameter(p).stats.OddsRatio),...
+    sprintf('%1.3f',parameter(p).stats.p)},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+clinical_table = [clinical_table;cell2table({'Women',...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(1,1),...
+    parameter(p).stats.tbl(1,1)/(parameter(p).stats.tbl(1,1)+parameter(p).stats.tbl(2,1))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,1),...
+    parameter(p).stats.tbl(2,1)/(parameter(p).stats.tbl(1,1)+parameter(p).stats.tbl(2,1))*100),...
+    '',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+
+% Age at first eeg
+p = 33;
+clinical_table = [clinical_table;cell2table({parameter(p).name,...
+    sprintf('%1.1f',parameter(p).stats.avg_dur(2)),sprintf('%1.1f',parameter(p).stats.avg_dur(1))...
+    sprintf('%1.2f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+% Tried VPA
+clinical_table = [clinical_table;cell2table({'TriedVPA','','','',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+p = 5;
+
+clinical_table = [clinical_table;cell2table({'Yes',...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(1,2),...
+    parameter(p).stats.tbl(1,2)/(parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(2,2))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,2),...
+    parameter(p).stats.tbl(2,2)/(parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(2,2))*100),...
+    sprintf('%1.2f',parameter(p).stats.OddsRatio),sprintf('%1.3f',parameter(p).stats.p)},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+clinical_table = [clinical_table;cell2table({'No',...
+    sprintf('%d (%1.1f%%)',...    
+    parameter(p).stats.tbl(1,1),...
+    parameter(p).stats.tbl(1,1)/(parameter(p).stats.tbl(1,1)+parameter(p).stats.tbl(2,1))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,1),...
+    parameter(p).stats.tbl(2,1)/(parameter(p).stats.tbl(1,1)+parameter(p).stats.tbl(2,1))*100),...
+    '',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+% EEG duration
+p = 24;
+clinical_table = [clinical_table;cell2table({parameter(p).name,...
+    sprintf('%1.1f',parameter(p).stats.avg_dur(2)),...
+    sprintf('%1.1f',parameter(p).stats.avg_dur(1)),...
+    sprintf('%1.2f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+% Captured sleep
+clinical_table = [clinical_table;cell2table({'CapturedSleep','','','',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+p = 4;
+
+clinical_table = [clinical_table;cell2table({'Yes',...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(1,2),...
+    parameter(p).stats.tbl(1,2)/(parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(2,2))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,2),...
+    parameter(p).stats.tbl(2,2)/(parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(2,2))*100),...
+    sprintf('%1.2f',parameter(p).stats.OddsRatio),...
+    sprintf('%1.3f',parameter(p).stats.p)},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+clinical_table = [clinical_table;cell2table({'No',...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(1,1),...
+    parameter(p).stats.tbl(1,1)/(parameter(p).stats.tbl(1,1)+parameter(p).stats.tbl(2,1))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,1),...
+    parameter(p).stats.tbl(2,1)/(parameter(p).stats.tbl(2,1)+parameter(p).stats.tbl(1,1))*100),...
+    '',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+
+% Format columns nicely
+clinical_table.Parameter{1} = 'Total number';
+clinical_table.Parameter{5} = 'Age at first EEG';
+clinical_table.Parameter{6} = 'Tried VPA?';
+clinical_table.Parameter{9} = 'Duration (minutes)';
+clinical_table.Parameter{10} = 'Captured sleep?';
+%clinical_table.Responsive = cellfun(@(x)sprintf('%1.1f',x),clinical_table.Responsive,'UniformOutput',false);
+%clinical_table.Resistant = cellfun(@(x)sprintf('%1.1f',x),clinical_table.Resistant,'UniformOutput',false);
+%clinical_table.Statistic = cellfun(@(x)sprintf('%1.1f',x),clinical_table.Statistic,'UniformOutput',false);
+%clinical_table.P = cellfun(@(x)sprintf('%1.3f',x),clinical_table.P,'UniformOutput',false);
+
+fprintf('\n\nTable 1:\n');
+clinical_table
+fprintf('\n');
+writetable(clinical_table,[results_folder,'Table1.csv']);
+
+
+fprintf('\n\nTable2:\n');
+duration_feature_table
+fprintf('\n');
+writetable(duration_feature_table,[results_folder,'Table2.csv']);
 
 %% Make a summary table of univariate statistics for eeg features
 all_names = {};
@@ -476,10 +639,102 @@ for i = 1:length(all_n_resistant)
     str_responsive{i} = sprintf('%d (%1.1f%%)',all_n_responsive(i),all_perc_responsive(i)*100);
 end
 
-table(all_names,str_responsive,str_resistant,all_stat,all_p_value,...
+eeg_feature_table = table(all_names,str_responsive,str_resistant,all_stat,all_p_value,...
     'VariableNames',{'Feature','Responsive','Resistant',...
-    'OddsRatio','PValue'})
+    'OddsRatio','PValue'});
 
+% Format table
+eeg_feature_table.OddsRatio = arrayfun(@(x)sprintf('%1.2f',x),eeg_feature_table.OddsRatio,'UniformOutput',false);
+eeg_feature_table.PValue = arrayfun(@(x)sprintf('%1.3f',x),eeg_feature_table.PValue,'UniformOutput',false);
+eeg_feature_table.Feature{1} = 'GSW';
+eeg_feature_table.Feature{2} = 'PSW';
+eeg_feature_table.Feature{3} = 'PST';
+eeg_feature_table.Feature{4} = 'GPFA';
+eeg_feature_table.Feature{5} = 'GLVFA';
+eeg_feature_table.Feature{6} = 'Focal discharges';
+eeg_feature_table.Feature{7} = 'Focal slowing';
+%eeg_feature_table.Properties.VariableNames{'OddsRatio'} = 'Odds ratio';
+%eeg_feature_table.Properties.VariableNames{'PValue'} = 'p value';
+
+fprintf('\n\nTable3:\n');
+eeg_feature_table
+fprintf('\n');
+writetable(eeg_feature_table,[results_folder,'Table3.csv']);
+
+
+%% Supplemental table for sleep vs wake features
+all_names = {};
+all_p_value = [];
+all_stat = [];
+all_n_resistant = [];
+all_n_responsive = [];
+
+all_perc_resistant = [];
+all_perc_responsive = [];
+
+for p = [7:16,19:22] %wake and sleep eeg features
+    if strcmp(parameter(p).name,'duration_minutes') == 1, continue; end
+    if strcmp(parameter(p).name,'sex') == 1, continue; end
+    
+    
+    
+    all_names = [all_names;parameter(p).name];
+    if isfield(parameter(p).stats,'p') == 0
+        all_p_value = [all_p_value;nan];
+        all_stat = [all_stat;nan];
+    else
+        all_p_value = [all_p_value;parameter(p).stats.p];
+        all_stat = [all_stat;parameter(p).stats.OddsRatio];
+    end
+    
+    %{
+    if isfield(parameter(p).stats,'OddsRatio')
+        all_stat = [all_stat;parameter(p).stats.OddsRatio];
+    elseif isfield(parameter(p).stats,'chi2')
+        all_stat = [all_stat;parameter(p).stats.chi2];
+    end
+    %}
+
+    all_n_resistant = [all_n_resistant;parameter(p).stats.tbl(2,2)];
+    all_n_responsive = [all_n_responsive;parameter(p).stats.tbl(1,2)];
+    
+    all_perc_resistant = [all_perc_resistant;parameter(p).stats.tbl(2,2)/...
+        (parameter(p).stats.tbl(2,2)+parameter(p).stats.tbl(2,1))];
+    all_perc_responsive = [all_perc_responsive;parameter(p).stats.tbl(1,2)/...
+        (parameter(p).stats.tbl(1,2)+parameter(p).stats.tbl(1,1))];
+    
+end
+
+str_resistant = cell(length(all_n_resistant),1);
+str_responsive = cell(length(all_n_resistant),1);
+
+for i = 1:length(all_n_resistant)
+    str_resistant{i} = sprintf('%d (%1.1f%%)',all_n_resistant(i),all_perc_resistant(i)*100);
+    str_responsive{i} = sprintf('%d (%1.1f%%)',all_n_responsive(i),all_perc_responsive(i)*100);
+end
+
+eeg_supplemental_table = table(all_names,str_responsive,str_resistant,all_stat,all_p_value,...
+    'VariableNames',{'Feature','Responsive','Resistant',...
+    'OddsRatio','PValue'});
+
+eeg_supplemental_table.Feature{1} = 'GSW awake';
+eeg_supplemental_table.Feature{2} = 'GSW asleep';
+eeg_supplemental_table.Feature{3} = 'PSW awake';
+eeg_supplemental_table.Feature{4} = 'PSW asleep';
+eeg_supplemental_table.Feature{5} = 'PST awake';
+eeg_supplemental_table.Feature{6} = 'PST asleep';
+eeg_supplemental_table.Feature{7} = 'GPFA awake';
+eeg_supplemental_table.Feature{8} = 'GPFA asleep';
+eeg_supplemental_table.Feature{9} = 'GLVFA awake';
+eeg_supplemental_table.Feature{10} = 'GLVFA asleep';
+eeg_supplemental_table.Feature{11} = 'Focal discharges awake';
+eeg_supplemental_table.Feature{12} = 'Focal discharges asleep';
+eeg_supplemental_table.Feature{13} = 'Focal slowing awake';
+eeg_supplemental_table.Feature{14} = 'Focal slowing asleep';
+
+eeg_supplemental_table.OddsRatio = arrayfun(@(x)sprintf('%1.2f',x),eeg_supplemental_table.OddsRatio,'UniformOutput',false);
+eeg_supplemental_table.PValue = arrayfun(@(x)sprintf('%1.3f',x),eeg_supplemental_table.PValue,'UniformOutput',false);
+writetable(eeg_supplemental_table,[results_folder,'SuppTable1.csv']);
 
 %% Multivariate analysis
 new_table.drug_resistant = logical(new_table.drug_resistant); % convert dr to logical
