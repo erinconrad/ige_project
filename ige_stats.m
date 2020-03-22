@@ -39,14 +39,31 @@ parameter(30).name = 'slow';
 parameter(31).name = 'foc_dis';
 parameter(32).name = 'foc_slow';
 parameter(33).name = 'age_at_eeg';
+parameter(34).name = 'gsw_time';
+parameter(35).name = 'psw_time';
+parameter(36).name = 'pst_time';
+parameter(37).name = 'gpfa_time';
+parameter(38).name = 'total_time_first_gsw'; 
+parameter(39).name = 'total_time_first_psw';
+parameter(40).name = 'total_time_first_pst';
+parameter(41).name = 'total_time_first_gpfa';
+
+
+% Pretty names for figure
+parameter(38).pretty_name = 'GSW'; % this doesn't work
+parameter(39).pretty_name = 'PSW';
+parameter(40).pretty_name = 'PST';
+parameter(41).pretty_name = 'GPFA';
 
 % tell it which parameters are the awake version of the one below it
 eeg_parameters = [7:22,25:32];
 awake_parameters = [7:2:21];
 summary_parameters = [25:32];
+lasso_features = [1 3 5 24 25:32 33];
+lasso_cat = [1 3 5 25:32];
 
 %% File path
-csv_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/IGEDatabase-DeidentifiedData_DATA_2020-02-20_2017.csv";
+csv_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/IGEDatabase-DeidentifiedData_DATA_2020-03-21_1557.csv";
 r_file_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/data_for_r.csv";
 results_folder = '/Users/erinconrad/Desktop/residency stuff/R25/ige project/results/';
 
@@ -73,6 +90,7 @@ age_eeg_col = parameter(33).column;
 
 %% Prep new table
 new_table = data;
+first_routine_eeg_table = data;
 
 % Find eeg rows in table
 eeg_row = zeros(size(data,1),1);
@@ -86,6 +104,9 @@ end
 
 % Prep array for duration in minutes
 duration_minutes = zeros(size(eeg_row));
+
+% Prep arrays for time to first occurrence of various eeg features
+first_feature = nan(length(eeg_row),4);
 
 % Prep arrays for new eeg summary features (concatenating sleep and
 % wakefulness)
@@ -121,6 +142,8 @@ for i = 1:size(data,1)-1
     else
         new_table.sleep(i) = 0;
     end
+    
+    
     
     % Get total duration of eeg
     duration1 = table2array(data(curr_eeg_rows,parameter(2).column));
@@ -197,6 +220,72 @@ for i = 1:size(data,1)-1
             summ(count).array(i) = 0;
         end
         
+        % Find time to first occurrence of various eeg features
+        if ismember(count,1:4) % loop through features we're checking (in order, gsw, psw, pst, gpfa)
+            
+            % Skip it if they don't have the feature
+            if any(curr_cols(:)) == 0
+                continue
+            end
+            
+            time_elapsed = 0;
+            found_feature_time = 0;
+            
+            % Get order of EEG rows by date of EEG (age at eeg so de-id)
+            eeg_dates = table2array(data(curr_eeg_rows,...
+            parameter(33).column));
+            [~,date_order] = sort(eeg_dates);
+            
+            % Loop through EEG rows by date of EEG
+            for d = curr_eeg_rows(date_order)'
+                
+                % Get the time to feature for this eeg
+                eeg_time = table2array(data(d,parameter(34-1+count).column));
+                eeg_time = duration(eeg_time{1},'InputFormat','hh:mm');
+                
+                % If we find the feature in this EEG, fill array and break
+                if ~isnan(eeg_time)
+                    first_feature(i,count) = (time_elapsed) + minutes(eeg_time);
+                    found_feature_time = 1;
+                    break
+                else
+                % If we don't find it, add duration of the EEG
+                    cur_dur = table2array(data(d,parameter(2).column));
+                    cur_dur = cur_dur{1};
+        
+                    % Fix for mistakes in text
+                    cur_dur = strrep(cur_dur,'.',':');
+
+                    if length(cur_dur) == 4 || length(cur_dur) == 5
+                        cur_dur = duration(cur_dur,'InputFormat','hh:mm');
+                    elseif length(cur_dur) == 8
+                        cur_dur = duration(cur_dur,'InputFormat','hh:mm:ss');
+                    elseif isempty(cur_dur) == 1
+                        cur_dur = 0;
+                    elseif strcmp(cur_dur,'41 minutes') == 1 % correction for mistake in text
+                        cur_dur = duration('00:41','InputFormat','hh:mm');
+                    else
+                        fprintf('Warning, duration text for row %d says %s\n',i,cur_dur);
+                        cur_dur = 0;
+                    end
+                    if cur_dur == 0
+                        time_elapsed = time_elapsed + (cur_dur);
+                    else
+                        time_elapsed = time_elapsed + minutes(cur_dur);
+                    end
+                
+                end
+            end
+            % If we haven't found the time after this loop and not excluding, throw an error
+            if found_feature_time == 0
+                if any(table2array(data(curr_eeg_rows,parameter(6).column))) == 0 && ...
+                        table2array(data(min(curr_eeg_rows)-1,parameter(23).column)) == 0
+                    error('what\n'); 
+                end
+            end
+            
+        end
+        
     end
     
     % Get if we are excluding based on the eeg
@@ -206,12 +295,12 @@ for i = 1:size(data,1)-1
     else
         new_table.exclude_eeg___0(i) = 0;
     end
-    
 end
-
 
 % Add duration info
 new_table = addvars(new_table,duration_minutes);
+
+
 
 % Add summary info
 for i = 1:length(summ)
@@ -223,19 +312,171 @@ for i = summary_parameters
     new_table.Properties.VariableNames{parameter(i).column} = parameter(i).name;
 end
 
+% Add time to first occurrence info
+total_time_first_gsw = first_feature(:,1);
+total_time_first_psw = first_feature(:,2);
+total_time_first_pst = first_feature(:,3);
+total_time_first_gpfa = first_feature(:,4);
+new_table = addvars(new_table,total_time_first_gsw);
+new_table = addvars(new_table,total_time_first_psw);
+new_table = addvars(new_table,total_time_first_pst);
+new_table = addvars(new_table,total_time_first_gpfa);
+
 
 % Remove eeg rows
 new_table(logical(eeg_row),:) = [];
 
+%% Get eeg-specific data for first routine eeg table
+% record ids corresponding to no routine eeg
+no_routine_eeg = [];
+
+% Prep array for duration in minutes
+duration_minutes = zeros(size(eeg_row));
+
+for i = 1:size(data,1)
+    % continue if it's an eeg row
+    if eeg_row(i) == 1, continue; end
+    
+    % Find the rows corresponding to the eeg data for this clinical row
+    curr_eeg_rows = [];
+    k = 1; % the possible eeg row we're checking
+    while 1
+        if i+k >size(data,1)
+            break % break if it's end of table
+        end
+        if eeg_row(i+k) == 1 % add it if it's an eeg row
+            curr_eeg_rows = [curr_eeg_rows;i+k];
+        else
+            break % once you hit the first non-eeg row, you're done
+        end
+        k = k + 1; % move to the next row
+    end
+    
+
+    
+    % Find the first routine eeg
+    
+    % get eegs duration
+    duration1 = table2array(data(curr_eeg_rows,parameter(2).column));
+    dur_array = [];
+    
+    for j = 1:length(duration1)
+        dur_text = duration1{j};
+        
+        % Fix for mistakes in text
+        dur_text = strrep(dur_text,'.',':');
+        
+        if length(dur_text) == 4 || length(dur_text) == 5
+            dur_num = duration(dur_text,'InputFormat','hh:mm');
+        elseif length(dur_text) == 8
+            dur_num = duration(dur_text,'InputFormat','hh:mm:ss');
+        elseif isempty(dur_text) == 1
+            dur_num = 0;
+        elseif strcmp(dur_text,'41 minutes') == 1 % correction for mistake in text
+            dur_num = duration('00:41','InputFormat','hh:mm');
+        else
+            fprintf('Warning, duration text for row %d says %s\n',i,dur_text);
+            dur_num = 0;
+        end
+        
+        dur_array = [dur_array;dur_num];
+    end
+    
+    % if none is less than one hour, add the record id to my list and move
+    % on
+    if ~any(minutes(dur_array) < 60)
+        no_routine_eeg = [no_routine_eeg;data.record_id(i)];
+        continue
+    end
+    
+    % Find the eegs with duration less than one hour
+    routine_eeg_rows = curr_eeg_rows(minutes(dur_array) < 60);
+    dur_array = dur_array(minutes(dur_array) < 60);
+    
+    % Find the FIRST routine eeg
+    ages = table2array(data(routine_eeg_rows,parameter(33).column)); % get the ages at routines eegs
+    [~,I] = min(ages); % find the index of the minimum age
+    first_routine_eeg_row = routine_eeg_rows(I); % get the row corresponding to that index
+    
+    if minutes(dur_array(I)) == 0
+         duration_minutes(i) = 0;
+    else
+        duration_minutes(i) = minutes(dur_array(I));
+    end
+    
+    % Now that I have the eeg I want, fill the clinical row up with the
+    % info for that EEG
+    
+    % summarize eeg features
+    for j = feature_cols
+        curr_col = table2array(data(first_routine_eeg_row,j));
+        
+        % If any are checked, make the clinical column be 1
+        if any(curr_col) == 1
+            first_routine_eeg_table{i,j} = 1;
+        else
+            first_routine_eeg_table{i,j} = 0;
+        end
+    end
+    
+    % now concatenate sleep and wake for new columns
+    count = 0;
+    for j = awake_parameters
+        count = count + 1; % which of the awake parameters it is
+        
+        % get the columns corresponding to this AND the sleep version
+        curr_cols = table2array(data(first_routine_eeg_row,...
+            parameter(j).column:parameter(j+1).column));
+        
+        
+        % If any are checked in awake OR sleep, make the new clinical
+        % column be 1
+        if any(curr_cols(:)) == 1
+            summ(count).array(i) = 1;
+        else
+            summ(count).array(i) = 0;
+        end
+        
+    end
+    
+    
+end
+
+% Add duration info
+first_routine_eeg_table = addvars(first_routine_eeg_table,duration_minutes);
+
+% Add summary info
+for i = 1:length(summ)
+    first_routine_eeg_table = addvars(first_routine_eeg_table,summ(i).array);
+end
+
+% Rename summary variable names
+for i = summary_parameters
+    first_routine_eeg_table.Properties.VariableNames{parameter(i).column} = parameter(i).name;
+end
+
+
+
+% Remove eeg rows
+first_routine_eeg_table(logical(eeg_row),:) = [];
 
 %% Identify and remove exclusion rows
 exclude = any([new_table.exclude_clinical___0==1,...
     new_table.exclude_eeg___0 == 1],2);
 
+% Get record ids corresponding to excluded rows
+exclude_record_ids = new_table(exclude == 1,:).record_id;
+
 % Remove exclusion rows
 new_table(exclude,:) = [];
+first_routine_eeg_table(exclude,:) = [];
 
 fprintf('Excluded %d EEGs per criteria.\n',sum(exclude));
+
+%% Also exclude record ids without routines in the routine eeg table
+first_routine_eeg_table(ismember(first_routine_eeg_table.record_id,no_routine_eeg),:) = [];
+fprintf('Excluded %d patients from routine EEG table.\n',length(no_routine_eeg));
+
 
 %% Identify and remove zero duration eegs (ideally shouldn't have these)
 zero_duration = find(new_table.duration_minutes == 0);
@@ -245,13 +486,17 @@ for i = 1:length(zero_duration)
 end
 new_table(zero_duration,:) = [];
 
+
+
 %% Redefine drug resistance to be 1 or 0
 % In the Redcap table, drug_resistant = 2 means responsive, 1 means
 % resistant, so now 1 means responsive, 0 means resistant
 new_table.drug_resistant = new_table.drug_resistant - 1;
+first_routine_eeg_table.drug_resistant = first_routine_eeg_table.drug_resistant - 1;
 
 % So flip it so now 1 means resistant, 0 means responsive
 new_table.drug_resistant = ~new_table.drug_resistant;
+first_routine_eeg_table.drug_resistant = ~first_routine_eeg_table.drug_resistant;
 
 %% See if any nans for drug resistant (there shouldn't be)
 dr_nan = find(isnan(new_table.drug_resistant));
@@ -264,7 +509,9 @@ end
 %% Print some random rows to test that I didn't mess up
 if 0
     for i = 1:10
+        %r = randi(size(first_routine_eeg_table,1));
         r = randi(size(new_table,1));
+        %first_routine_eeg_table(r,:)
         new_table(r,:)
     end
 end
@@ -340,7 +587,25 @@ duration_feature_table.AverageDurationWithFeature = ...
     arrayfun(@(x)sprintf('%1.1f',x),duration_feature_table.AverageDurationWithFeature,'UniformOutput',false);
 duration_feature_table.AverageDurationWithoutFeature = ...
     arrayfun(@(x)sprintf('%1.1f',x),duration_feature_table.AverageDurationWithoutFeature,'UniformOutput',false);
+
+% Add asterisks to p
+p_stars = cell(length(duration_feature_table.p),1);
+for i = 1:length(duration_feature_table.p)
+    if duration_feature_table.p(i) < 0.001/length(duration_feature_table.p)
+        p_stars{i} = '***';
+    elseif duration_feature_table.p(i) < 0.01/length(duration_feature_table.p)
+        p_stars{i} = '**';
+    elseif duration_feature_table.p(i) < 0.05/length(duration_feature_table.p)
+        p_stars{i} = '*'; 
+    else
+        p_stars{i} = ''; 
+    end
+end
+
 duration_feature_table.p = arrayfun(@(x)sprintf('%1.3f',x),duration_feature_table.p,'UniformOutput',false);
+for i = 1:length(duration_feature_table.p)
+    duration_feature_table.p{i} = [duration_feature_table.p{i},p_stars{i}];
+end
 
 %duration_feature_table.Properties.VariableNames{'AverageDurationWithFeature'} = 'Duration with feature';
 %duration_feature_table.Properties.VariableNames{'AverageDurationWithoutFeature'} = 'Duration without feature';
@@ -417,6 +682,99 @@ set(gca,'fontsize',20)
 xlabel('EEG feature')
 ylabel({'Percentage of patients with feature';'who have it in <24 hours'});
 end
+
+if 1
+%% Figure for percentage of patients with feature by certain times
+% X axis is duration of eeg
+% Y axis is number of patients whose eeg is that duration or lower who have
+% the feature of interest
+fig1 = figure;
+set(fig1,'position',[100 416 600 384])
+
+fig2 = figure;
+set(fig2,'position',[100 416 600 384])
+legend_names = {};
+
+features_to_plot = 38:41;
+
+dur_short = zeros(length(features_to_plot),1);
+count = 0;
+for p = features_to_plot
+    count = count + 1;
+    
+    % get appropriate column
+    name = parameter(p).name;
+    pretty_name = parameter(p).pretty_name;
+    legend_names = [legend_names,pretty_name];
+    
+    % Get times at which that feature occurs
+    par = new_table.(name);
+    
+    % Define duration step size
+    dur_steps = 0:20:max(par)+20;
+    n_par_dur = zeros(1,length(dur_steps));
+    perc_par_dur = zeros(1,length(dur_steps));
+    
+    % Loop through duration steps
+    for d = 1:length(dur_steps)
+        
+        % Get the number of patients who have parameter by
+        % less than or equal to specified duration
+        n_par_dur(d) = sum(par<=dur_steps(d));
+        
+        % Get the percentage of patients who have parameter within that
+        % specified duration (divide by the total number with that
+        % parameter)
+        perc_par_dur(d) = sum(par<=dur_steps(d))/sum(~isnan(par))*100;
+    end
+    figure(fig1)
+    plot(dur_steps/60,perc_par_dur,'linewidth',2)
+    hold on
+    
+    % Compare less than 1 hour EEGs
+    dur_short(count) = sum(par<=1*60)/sum(~isnan(par))*100;
+    
+end
+
+figure(fig1)
+xlabel('EEG duration (hours)')
+ylabel('Percentage of patients with feature');
+legend(legend_names,'location','southeast')
+set(gca,'fontsize',20)
+print(fig1,[results_folder,'Figure1'],'-depsc')
+%close(fig1)
+
+figure(fig2)
+bar(dur_short)
+xticklabels(legend_names)
+set(gca,'fontsize',20)
+xlabel('EEG feature')
+ylabel({'Percentage of patients with feature';'who have it in <1 hour'});
+
+%% Statistical test comparing time to first occurrence of feature
+% Get times to first occurrences
+all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
+    new_table.total_time_first_pst,new_table.total_time_first_gpfa];
+
+
+% Kruskall wallis with post-hoc comparisons
+[p,tbl,stats] = kruskalwallis(all_times);
+c = multcompare(stats,'CType','dunn-sidak')
+
+% Print the stats
+fprintf(['The median time to first occurrence of feature is:\n'...
+    '%1.1f minutes for GSW,\n'...
+    '%1.1f minutes for PSW,\n'...
+    '%1.1f minutes for PST,\n'...
+    '%1.1f minutes for GPFA.\n'...
+    'Kruskall-Wallis p = %1.3f\n'],nanmedian(new_table.total_time_first_gsw),...
+    nanmedian(new_table.total_time_first_psw),...
+    nanmedian(new_table.total_time_first_pst),...
+    nanmedian(new_table.total_time_first_gpfa),...
+    p);
+
+end
+
 
 
 %% Categoricla Univariate stats
@@ -736,17 +1094,43 @@ eeg_supplemental_table.OddsRatio = arrayfun(@(x)sprintf('%1.2f',x),eeg_supplemen
 eeg_supplemental_table.PValue = arrayfun(@(x)sprintf('%1.3f',x),eeg_supplemental_table.PValue,'UniformOutput',false);
 writetable(eeg_supplemental_table,[results_folder,'SuppTable1.csv']);
 
+%% Sub-analysis as a way to control for duration - only take first routine EEG
+[tbl,chi2,pval,labels] = crosstab(first_routine_eeg_table.drug_resistant,...
+    first_routine_eeg_table.pst);
+[~,pval,stats] = fishertest(tbl);
+fprintf(['\nWhen we only look at the first routine EEG (excluding patients without routine EEGs),\n'...
+    '%d drug-responsive patients (%1.1f%%) have PST and %d resistant patients (%1.1f%%) have PST\n'...
+    '(Fisher exact test: odds-ratio %1.1f, p = %1.3f)\n'],tbl(1,2),tbl(1,2)/(tbl(1,2)+tbl(1,1))*100,...
+    tbl(2,2),tbl(2,2)/(tbl(2,2)+tbl(2,1))*100,stats.OddsRatio,pval);
+
 %% Multivariate analysis
 new_table.drug_resistant = logical(new_table.drug_resistant); % convert dr to logical
+
+%{
+Each minute is an addition sampling opportunity to find more PST. And so if
+one patient has one minute of data and another patient has 1,000, it is
+reasonable to weight the one with one minute of data 1,000 times more so as
+to make the effective sample sizes equivalent.
+
+%}
+
+mdl_weight = fitglm(new_table,'drug_resistant~pst','Distribution','binomial',...
+    'CategoricalVars',{'pst'},'Weights',1./new_table.duration_minutes)
+
 mdl = fitglm(new_table,'drug_resistant~gsw+psw+pst+gpfa+glvfa+foc_dis+foc_slow+duration_minutes',...
     'Distribution','binomial','CategoricalVars',{'gsw','psw','pst',...
     'gpfa','glvfa','foc_dis','foc_slow'});
-mdl
+
 
 % Simpler model
-mdl2 = fitglm(new_table,'drug_resistant~pst+duration_minutes',...
+mdl2 = fitglm(new_table,'drug_resistant~pst+duration_minutes+pst*duration_minutes',...
     'Distribution','binomial','CategoricalVars',{'pst'});
-mdl2
+
+
+
+mdl = fitglm(new_table,'drug_resistant~pst',...
+    'Distribution','binomial','CategoricalVars',{'pst',...
+    })
 
 
 % Try taking the log the length of EEG
@@ -756,6 +1140,12 @@ new_table = addvars(new_table,duration_log);
 mdl3 = fitglm(new_table,'drug_resistant~pst+duration_log',...
     'Distribution','binomial','CategoricalVars',{'pst'});
 mdl3
+
+%% Do lasso approach (l1 regularization) for feature selection
+lasso_array = table2array(new_table(:,vertcat(parameter(lasso_features).column)));
+X = lasso_array(:,2:end);
+y = lasso_array(:,1);
+[B,FitInfo] = lassoglm(X,y,'binomial','CV',10);
 
 %% Output variables to a csv file, to be read in R for FIRTH logistic regression using logistf
 writetable(new_table,r_file_path);

@@ -12,12 +12,12 @@ dr<-read.csv(file_path,header=TRUE,sep=",")
 # Tell it which variables are categorical?????
 
 # Do regular model
-fit1<-logistf(data=dr,drug_resistant~pst+gpfa+duration_minutes,firth=FALSE,pl=FALSE)
+fit1<-logistf(data=dr,drug_resistant~pst+duration_minutes,firth=FALSE,pl=FALSE)
 summary(fit1)
 exp(coef(fit1))
 
 # Do penalized model
-fit2<-logistf(data=dr,drug_resistant~pst+gpfa+duration_minutes,firth=TRUE,pl=TRUE)
+fit2<-logistf(data=dr,drug_resistant~pst+duration_minutes,firth=TRUE,pl=TRUE)
 summary(fit2)
 exp(coef(fit2))
 
