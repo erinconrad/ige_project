@@ -47,10 +47,14 @@ parameter(38).name = 'total_time_first_gsw';
 parameter(39).name = 'total_time_first_psw';
 parameter(40).name = 'total_time_first_pst';
 parameter(41).name = 'total_time_first_gpfa';
+parameter(42).name = 'total_time_first_pst_or_gpfa';
+parameter(43).name = 'pst_or_gpfa';
+parameter(44).name = 'pst_or_gpfa_awake';
+parameter(45).name = 'pst_or_gpfa_asleep';
 
 
 % Pretty names for figure
-parameter(38).pretty_name = 'GSW'; % this doesn't work
+parameter(38).pretty_name = 'GSW'; 
 parameter(39).pretty_name = 'PSW';
 parameter(40).pretty_name = 'PST';
 parameter(41).pretty_name = 'GPFA';
@@ -92,6 +96,8 @@ age_eeg_col = parameter(33).column;
 new_table = data;
 first_routine_eeg_table = data;
 
+total_eegs = 0;
+
 % Find eeg rows in table
 eeg_row = zeros(size(data,1),1);
 curr_num = 0;
@@ -128,6 +134,7 @@ for i = 1:size(data,1)-1
             break % break if it's end of table
         end
         if eeg_row(i+k) == 1 % add it if it's an eeg row
+            total_eegs = total_eegs + 1;
             curr_eeg_rows = [curr_eeg_rows;i+k];
         else
             break % once you hit the first non-eeg row, you're done
@@ -233,14 +240,14 @@ for i = 1:size(data,1)-1
             
             % Get order of EEG rows by date of EEG (age at eeg so de-id)
             eeg_dates = table2array(data(curr_eeg_rows,...
-            parameter(33).column));
+            parameter(33).column)); %33 is age_at_eeg
             [~,date_order] = sort(eeg_dates);
             
             % Loop through EEG rows by date of EEG
             for d = curr_eeg_rows(date_order)'
                 
                 % Get the time to feature for this eeg
-                eeg_time = table2array(data(d,parameter(34-1+count).column));
+                eeg_time = table2array(data(d,parameter(34-1+count).column)); %34 is gsw time
                 eeg_time = duration(eeg_time{1},'InputFormat','hh:mm');
                 
                 % If we find the feature in this EEG, fill array and break
@@ -301,7 +308,6 @@ end
 new_table = addvars(new_table,duration_minutes);
 
 
-
 % Add summary info
 for i = 1:length(summ)
     new_table = addvars(new_table,summ(i).array);
@@ -317,11 +323,21 @@ total_time_first_gsw = first_feature(:,1);
 total_time_first_psw = first_feature(:,2);
 total_time_first_pst = first_feature(:,3);
 total_time_first_gpfa = first_feature(:,4);
+total_time_first_pst_or_gpfa = min(first_feature(:,3:4),[],2);
 new_table = addvars(new_table,total_time_first_gsw);
 new_table = addvars(new_table,total_time_first_psw);
 new_table = addvars(new_table,total_time_first_pst);
 new_table = addvars(new_table,total_time_first_gpfa);
+new_table = addvars(new_table,total_time_first_pst_or_gpfa);
 
+% Add gpt or gpfa
+pst_or_gpfa = any([new_table.pst,new_table.gpfa],2);
+pst_or_gpfa_awake = any([new_table.pst___1,new_table.gpfa___1],2);
+pst_or_gpfa_asleep = any([new_table.pst___2,new_table.gpfa___2],2);
+
+new_table = addvars(new_table,pst_or_gpfa);
+new_table = addvars(new_table,pst_or_gpfa_awake);
+new_table = addvars(new_table,pst_or_gpfa_asleep);
 
 % Remove eeg rows
 new_table(logical(eeg_row),:) = [];
@@ -684,18 +700,41 @@ ylabel({'Percentage of patients with feature';'who have it in <24 hours'});
 end
 
 if 1
+    
+
+%% Statistical test comparing time to first occurrence of feature
+% Get times to first occurrences
+all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
+    new_table.total_time_first_pst,new_table.total_time_first_gpfa];
+
+
+% Kruskall wallis with post-hoc comparisons
+[p,tbl,stats] = kruskalwallis(all_times,[],'off');
+c = multcompare(stats,'CType','dunn-sidak','Display','off');
+
+% Print the stats
+fprintf(['The median time to first occurrence of feature is:\n'...
+    '%1.1f minutes for GSW,\n'...
+    '%1.1f minutes for PSW,\n'...
+    '%1.1f minutes for PST,\n'...
+    '%1.1f minutes for GPFA.\n'...
+    'Kruskall-Wallis p = %1.3f\n'],nanmedian(new_table.total_time_first_gsw),...
+    nanmedian(new_table.total_time_first_psw),...
+    nanmedian(new_table.total_time_first_pst),...
+    nanmedian(new_table.total_time_first_gpfa),...
+    p);    
+
 %% Figure for percentage of patients with feature by certain times
 % X axis is duration of eeg
 % Y axis is number of patients whose eeg is that duration or lower who have
 % the feature of interest
 fig1 = figure;
-set(fig1,'position',[100 416 600 384])
+set(fig1,'position',[100 378 1324 422])
 
-fig2 = figure;
-set(fig2,'position',[100 416 600 384])
+subplot(1,2,1)
 legend_names = {};
 
-features_to_plot = 38:41;
+features_to_plot = 38:41; % this is time to first feature for gsw, psw, pst, gpfa
 
 dur_short = zeros(length(features_to_plot),1);
 count = 0;
@@ -707,7 +746,7 @@ for p = features_to_plot
     pretty_name = parameter(p).pretty_name;
     legend_names = [legend_names,pretty_name];
     
-    % Get times at which that feature occurs
+    % Get first time at which that feature occurs
     par = new_table.(name);
     
     % Define duration step size
@@ -727,7 +766,7 @@ for p = features_to_plot
         % parameter)
         perc_par_dur(d) = sum(par<=dur_steps(d))/sum(~isnan(par))*100;
     end
-    figure(fig1)
+    
     plot(dur_steps/60,perc_par_dur,'linewidth',2)
     hold on
     
@@ -736,42 +775,29 @@ for p = features_to_plot
     
 end
 
-figure(fig1)
-xlabel('EEG duration (hours)')
-ylabel('Percentage of patients with feature');
+xlim([0 24])
+xlabel('Time to first feature occurrence (hours)')
+ylabel({'Percentage'});
 legend(legend_names,'location','southeast')
 set(gca,'fontsize',20)
-print(fig1,[results_folder,'Figure1'],'-depsc')
+
 %close(fig1)
 
-figure(fig2)
+subplot(1,2,2)
 bar(dur_short)
+hold on
+%{
+plot([1 3],[max(dur_short)+3 max(dur_short)+3],'k','linewidth',2)
+plot([1 1],[max(dur_short)+1 max(dur_short)+5],'k','linewidth',2)
+plot([3 3],[max(dur_short)+1 max(dur_short)+5],'k','linewidth',2)
+text(2,max(dur_short)+8,sprintf('**'),'HorizontalAlignment','Center','FontSize',40)
+%}
 xticklabels(legend_names)
 set(gca,'fontsize',20)
 xlabel('EEG feature')
-ylabel({'Percentage of patients with feature';'who have it in <1 hour'});
+ylabel({'Percentage';'with occurrence in <1 hour'});
+print(fig1,[results_folder,'Figure1'],'-depsc')
 
-%% Statistical test comparing time to first occurrence of feature
-% Get times to first occurrences
-all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
-    new_table.total_time_first_pst,new_table.total_time_first_gpfa];
-
-
-% Kruskall wallis with post-hoc comparisons
-[p,tbl,stats] = kruskalwallis(all_times);
-c = multcompare(stats,'CType','dunn-sidak')
-
-% Print the stats
-fprintf(['The median time to first occurrence of feature is:\n'...
-    '%1.1f minutes for GSW,\n'...
-    '%1.1f minutes for PSW,\n'...
-    '%1.1f minutes for PST,\n'...
-    '%1.1f minutes for GPFA.\n'...
-    'Kruskall-Wallis p = %1.3f\n'],nanmedian(new_table.total_time_first_gsw),...
-    nanmedian(new_table.total_time_first_psw),...
-    nanmedian(new_table.total_time_first_pst),...
-    nanmedian(new_table.total_time_first_gpfa),...
-    p);
 
 end
 
@@ -779,7 +805,7 @@ end
 
 %% Categoricla Univariate stats
 % Loop through categorical parameters of interest
-for p = [3:5,eeg_parameters]
+for p = [3:5,eeg_parameters,43:45]
     
     % Note that male == 1, female == 0
     % Treid VPA == 1, not tried VPA == 0
@@ -960,7 +986,7 @@ all_n_responsive = [];
 all_perc_resistant = [];
 all_perc_responsive = [];
 
-for p = 25:32
+for p = [25:32,43]
     if strcmp(parameter(p).name,'duration_minutes') == 1, continue; end
     if strcmp(parameter(p).name,'sex') == 1, continue; end
     
@@ -1011,6 +1037,7 @@ eeg_feature_table.Feature{4} = 'GPFA';
 eeg_feature_table.Feature{5} = 'GLVFA';
 eeg_feature_table.Feature{6} = 'Focal discharges';
 eeg_feature_table.Feature{7} = 'Focal slowing';
+eeg_feature_table.Feature{8} = 'PST or GPFA';
 %eeg_feature_table.Properties.VariableNames{'OddsRatio'} = 'Odds ratio';
 %eeg_feature_table.Properties.VariableNames{'PValue'} = 'p value';
 
@@ -1030,7 +1057,7 @@ all_n_responsive = [];
 all_perc_resistant = [];
 all_perc_responsive = [];
 
-for p = [7:16,19:22] %wake and sleep eeg features
+for p = [7:16,19:22,44:45] %wake and sleep eeg features
     if strcmp(parameter(p).name,'duration_minutes') == 1, continue; end
     if strcmp(parameter(p).name,'sex') == 1, continue; end
     
@@ -1045,13 +1072,6 @@ for p = [7:16,19:22] %wake and sleep eeg features
         all_stat = [all_stat;parameter(p).stats.OddsRatio];
     end
     
-    %{
-    if isfield(parameter(p).stats,'OddsRatio')
-        all_stat = [all_stat;parameter(p).stats.OddsRatio];
-    elseif isfield(parameter(p).stats,'chi2')
-        all_stat = [all_stat;parameter(p).stats.chi2];
-    end
-    %}
 
     all_n_resistant = [all_n_resistant;parameter(p).stats.tbl(2,2)];
     all_n_responsive = [all_n_responsive;parameter(p).stats.tbl(1,2)];
@@ -1089,6 +1109,8 @@ eeg_supplemental_table.Feature{11} = 'Focal discharges awake';
 eeg_supplemental_table.Feature{12} = 'Focal discharges asleep';
 eeg_supplemental_table.Feature{13} = 'Focal slowing awake';
 eeg_supplemental_table.Feature{14} = 'Focal slowing asleep';
+eeg_supplemental_table.Feature{15} = 'PST or GPFA awake';
+eeg_supplemental_table.Feature{16} = 'PST or GPFA asleep';
 
 eeg_supplemental_table.OddsRatio = arrayfun(@(x)sprintf('%1.2f',x),eeg_supplemental_table.OddsRatio,'UniformOutput',false);
 eeg_supplemental_table.PValue = arrayfun(@(x)sprintf('%1.3f',x),eeg_supplemental_table.PValue,'UniformOutput',false);
@@ -1103,9 +1125,43 @@ fprintf(['\nWhen we only look at the first routine EEG (excluding patients witho
     '(Fisher exact test: odds-ratio %1.1f, p = %1.3f)\n'],tbl(1,2),tbl(1,2)/(tbl(1,2)+tbl(1,1))*100,...
     tbl(2,2),tbl(2,2)/(tbl(2,2)+tbl(2,1))*100,stats.OddsRatio,pval);
 
-%% Multivariate analysis
+%% Stratify by duration (<1 hour, 1-24 hours, >=24 hours)
+sub_hour = new_table.duration_minutes <= 60;
+
+[tbl] = crosstab(new_table.drug_resistant(sub_hour),...
+    new_table.pst_or_gpfa(sub_hour));
+[~,pval,stats] = fishertest(tbl);
+
+fprintf(['\nLooking only at sub-hour EEGs,\n'...
+    '%d drug-responsive patients (%1.1f%%) have PST OR GPFA and %d resistant patients (%1.1f%%) have PST or GPFA\n'...
+    '(Fisher exact test: odds-ratio %1.1f, p = %1.3f)\n'],tbl(1,2),tbl(1,2)/(tbl(1,2)+tbl(1,1))*100,...
+    tbl(2,2),tbl(2,2)/(tbl(2,2)+tbl(2,1))*100,stats.OddsRatio,pval);
+
+[tbl] = crosstab(new_table.drug_resistant(~sub_hour),...
+    new_table.pst_or_gpfa(~sub_hour));
+[~,pval,stats] = fishertest(tbl);
+
+fprintf(['\nLooking only at super-hour EEGs,\n'...
+    '%d drug-responsive patients (%1.1f%%) have PST OR GPFA and %d resistant patients (%1.1f%%) have PST or GPFA\n'...
+    '(Fisher exact test: odds-ratio %1.1f, p = %1.3f)\n'],tbl(1,2),tbl(1,2)/(tbl(1,2)+tbl(1,1))*100,...
+    tbl(2,2),tbl(2,2)/(tbl(2,2)+tbl(2,1))*100,stats.OddsRatio,pval);
+
+
+%% Analysis based on frequency of PST or GPFA
 new_table.drug_resistant = logical(new_table.drug_resistant); % convert dr to logical
 
+% Add table column with rate of PST or GPFA
+pst_or_gpfa_rate = 1./new_table.total_time_first_pst_or_gpfa; % rate goes as one over the time to first instance
+pst_or_gpfa_rate(isnan(pst_or_gpfa_rate)) = 0; % if never occurs, set rate to 0
+new_table = addvars(new_table,pst_or_gpfa_rate); % add table column
+
+mdl_rate = fitglm(new_table,'drug_resistant~pst_or_gpfa_rate','Distribution','binomial');
+
+p = ranksum(new_table.pst_or_gpfa_rate(new_table.drug_resistant==1),...
+    new_table.pst_or_gpfa_rate(new_table.drug_resistant==0))
+
+
+%% Analysis weighted by duration
 %{
 Each minute is an addition sampling opportunity to find more PST. And so if
 one patient has one minute of data and another patient has 1,000, it is
@@ -1114,14 +1170,11 @@ to make the effective sample sizes equivalent.
 
 %}
 
-mdl_weight = fitglm(new_table,'drug_resistant~pst','Distribution','binomial',...
+mdl_weight = fitglm(new_table,'drug_resistant~pst_or_gpfa','Distribution','binomial',...
     'CategoricalVars',{'pst'},'Weights',1./new_table.duration_minutes)
 
-mdl = fitglm(new_table,'drug_resistant~gsw+psw+pst+gpfa+glvfa+foc_dis+foc_slow+duration_minutes',...
-    'Distribution','binomial','CategoricalVars',{'gsw','psw','pst',...
-    'gpfa','glvfa','foc_dis','foc_slow'});
 
-
+%% Other multivariate analyses
 % Simpler model
 mdl2 = fitglm(new_table,'drug_resistant~pst+duration_minutes+pst*duration_minutes',...
     'Distribution','binomial','CategoricalVars',{'pst'});
