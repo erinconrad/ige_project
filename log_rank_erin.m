@@ -1,4 +1,9 @@
-function [p,Z] = log_rank_erin(x1,x2,results_folder,feature)
+function log_rank_erin(x1,x2,results_folder,feature)
+
+%{
+This function is called by the main function ige_stats and generates the
+Kaplan Meier curve for the survival analysis
+%}
 
 all_x = [x1;x2];
 J = max(all_x(:,1)); % max time
