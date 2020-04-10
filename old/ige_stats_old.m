@@ -1,29 +1,7 @@
-%{
-This function performs the analysis for the paper "Using generalized 
-polyspike train to predict drug-resistant idiopathic generalized epilepsy".
-
-It, and de-identified data needed to run it, can be found at:
-https://github.com/erinconrad/ige_project
-
-The survival analysis is done in R on code that can be found in the same
-github repository.
-
-Erin Conrad, 2020
-%}
-
 function parameter = ige_stats
 
-%% Parameters for users to change
+%% Parameters
 doing_from_github = 0; % Set to 1 if running the code from the github repository (most people)
-
-% File paths
-csv_path = '../data/IGEDatabase-DeidentifiedData_DATA_2020-03-21_1557.csv'; % point to the data
-results_folder = '../results/'; % point to where you want to save results
-r_data_path = '../data/'; % where to save a table of data to be used for R analysis
-
-display_random_entries = 1; % Set to 1 to display data for random patients, to double check that it agrees with data table
-
-%% Other parameters
 
 % Add path to extra tools
 if doing_from_github == 0
@@ -93,8 +71,13 @@ parameter(41).pretty_name = 'GPFA';
 
 % tell it which parameters are the awake version of the one below it
 eeg_parameters = [7:22,25:32];
-awake_parameters = 7:2:21;
-summary_parameters = 25:32;
+awake_parameters = [7:2:21];
+summary_parameters = [25:32];
+
+%% File path
+csv_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/IGEDatabase-DeidentifiedData_DATA_2020-03-21_1557.csv";
+r_file_path = "/Users/erinconrad/Desktop/residency stuff/R25/ige project/data/data_for_r.csv";
+results_folder = '/Users/erinconrad/Desktop/residency stuff/R25/ige project/results/';
 
 %% Load csv file
 data = readtable(csv_path);
@@ -119,6 +102,7 @@ age_eeg_col = parameter(33).column;
 
 %% Prep new table
 new_table = data;
+first_routine_eeg_table = data;
 
 total_eegs = 0;
 
@@ -375,13 +359,15 @@ exclude = any([new_table.exclude_clinical___0==1,...
 new_table(exclude,:) = [];
 fprintf('Excluded %d EEGs per criteria.\n',sum(exclude));
 
+
 %% Identify and remove zero duration eegs (ideally shouldn't have these)
 zero_duration = find(new_table.duration_minutes == 0);
 for i = 1:length(zero_duration)
-    error('\nWarning, record ID %d with zero duration. Removing...\n',...
+    fprintf('\nWarning, record ID %d with zero duration. Removing...\n',...
         new_table.record_id(zero_duration(i)));
 end
 new_table(zero_duration,:) = [];
+
 
 
 %% Redefine drug resistance to be 1 or 0
@@ -401,13 +387,12 @@ if isempty(dr_nan) == 0
 end
 
 %% Print some random rows to test that I didn't mess up
-if display_random_entries
+if 0
     for i = 1:10
         r = randi(size(new_table,1));
         new_table(r,:)
     end
 end
-
 
 %{
 ********************************
@@ -415,7 +400,7 @@ Now do some statistics
 ********************************
 %}
 
-%% Relationship between PST and VPA (I don't report this)
+%% Relationship between PST and VPA
 % do chi squared
 [tbl,chi2,pval,labels] = crosstab(new_table.pst,...
     new_table.vpa);
@@ -520,6 +505,9 @@ for i = 1:length(duration_feature_table.p)
 end
 
 
+if 1
+    
+
 %% Statistical test comparing time to first occurrence of feature
 % Get times to first occurrences
 all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
@@ -528,6 +516,19 @@ all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
 
 % Kruskall wallis with post-hoc comparisons
 [p,tbl,stats] = kruskalwallis(all_times,[],'off');
+
+% Output all_times to do kruskal wallis in R so that I can get H statistic
+%{
+all_times_r = zeros(size(all_times,1)*4,2);
+for i = 1:size(all_times_r,1)
+    c = ceil(i/size(all_times,1));
+    r = mod(i,size(all_times,1)); if r == 0, r = size(all_times,1); end
+    all_times_r(i,1) = all_times(r,c);
+    all_times_r(i,2) = c;
+end
+all_times_r(isnan(all_times_r),:) = [];
+writematrix(all_times_r,'../data/r_table_kw.csv');
+%}
 
 % Post-hoc dunn-sidak tests
 c = multcompare(stats,'CType','dunn-sidak','Display','off');
@@ -604,9 +605,17 @@ annotation('textbox',[0.07 0.88 0.1 0.1],'String','A',...
     'linestyle','none','fontsize',35);
 
 
+%close(fig1)
+
 subplot(1,2,2)
 bar(dur_short)
 hold on
+%{
+plot([1 3],[max(dur_short)+3 max(dur_short)+3],'k','linewidth',2)
+plot([1 1],[max(dur_short)+1 max(dur_short)+5],'k','linewidth',2)
+plot([3 3],[max(dur_short)+1 max(dur_short)+5],'k','linewidth',2)
+text(2,max(dur_short)+8,sprintf('**'),'HorizontalAlignment','Center','FontSize',40)
+%}
 xticklabels(legend_names)
 set(gca,'fontsize',20)
 xlabel('EEG feature')
@@ -616,13 +625,16 @@ annotation('textbox',[0.48 0.88 0.1 0.1],'String','B',...
 print(fig1,[results_folder,'Figure1'],'-depsc')
 
 
+end
 
-%% Categorical Univariate stats
+
+
+%% Categoricla Univariate stats
 % Loop through categorical parameters of interest
 for p = [3:5,eeg_parameters,43:45]
     
     % Note that male == 1, female == 0
-    % Tried VPA == 1, not tried VPA == 0
+    % Treid VPA == 1, not tried VPA == 0
     
     % get appropriate column
     name = parameter(p).name;
@@ -630,7 +642,7 @@ for p = [3:5,eeg_parameters,43:45]
     % Get number who have parameter
     par = new_table.(name);
     
-    % do chi squared to get table
+    % do chi squared
     [tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant,...
         par);
     
@@ -641,7 +653,8 @@ for p = [3:5,eeg_parameters,43:45]
         continue
     end
     
-    % Fisher exact test (the one I actually use given small numbers)
+    % Fisher exact test
+    
     [~,pval,stats] = fishertest(tbl);
     parameter(p).stats.labels = labels;
     parameter(p).stats.tbl = tbl;
@@ -649,10 +662,14 @@ for p = [3:5,eeg_parameters,43:45]
     parameter(p).stats.OddsRatio = stats.OddsRatio;
     parameter(p).stats.ConfidenceInterval = stats.ConfidenceInterval;
     
- 
+    
+    
+    
+    
 end
 
-%% Clinical table
+%% Table 1
+% This will be long and ugly
 
 % Total number
 clinical_table = cell2table({'TotalNumber',sprintf('%d (%1.1f%%)',...
@@ -762,6 +779,10 @@ clinical_table.Parameter{5} = 'Age at first EEG';
 clinical_table.Parameter{6} = 'Tried VPA?';
 clinical_table.Parameter{9} = 'Duration (minutes)';
 clinical_table.Parameter{10} = 'Captured sleep?';
+%clinical_table.Responsive = cellfun(@(x)sprintf('%1.1f',x),clinical_table.Responsive,'UniformOutput',false);
+%clinical_table.Resistant = cellfun(@(x)sprintf('%1.1f',x),clinical_table.Resistant,'UniformOutput',false);
+%clinical_table.Statistic = cellfun(@(x)sprintf('%1.1f',x),clinical_table.Statistic,'UniformOutput',false);
+%clinical_table.P = cellfun(@(x)sprintf('%1.3f',x),clinical_table.P,'UniformOutput',false);
 
 fprintf('\n\nTable 1:\n');
 clinical_table
@@ -797,7 +818,13 @@ for p = [25:32,43]
     all_p_value = [all_p_value;parameter(p).stats.p];
     all_stat = [all_stat;parameter(p).stats.OddsRatio];
     all_ci = [all_ci;parameter(p).stats.ConfidenceInterval];
-
+    %{
+    if isfield(parameter(p).stats,'OddsRatio')
+        all_stat = [all_stat;parameter(p).stats.OddsRatio];
+    elseif isfield(parameter(p).stats,'chi2')
+        all_stat = [all_stat;parameter(p).stats.chi2];
+    end
+    %}
     
     all_n_resistant = [all_n_resistant;parameter(p).stats.tbl(2,2)];
     all_n_responsive = [all_n_responsive;parameter(p).stats.tbl(1,2)];
@@ -844,6 +871,8 @@ eeg_feature_table.Feature{5} = 'GLVFA';
 eeg_feature_table.Feature{6} = 'Focal discharges';
 eeg_feature_table.Feature{7} = 'Focal slowing';
 eeg_feature_table.Feature{8} = 'PST or GPFA';
+%eeg_feature_table.Properties.VariableNames{'OddsRatio'} = 'Odds ratio';
+%eeg_feature_table.Properties.VariableNames{'PValue'} = 'p value';
 
 fprintf('\n\nTable3:\n');
 eeg_feature_table
@@ -934,6 +963,8 @@ eeg_supplemental_table.Feature{15} = 'PST or GPFA awake';
 eeg_supplemental_table.Feature{16} = 'PST or GPFA asleep';
 
 
+
+%eeg_supplemental_table.OddsRatio = arrayfun(@(x)sprintf('%1.2f',x),eeg_supplemental_table.OddsRatio,'UniformOutput',false);
 eeg_supplemental_table.PValue = arrayfun(@(x)sprintf('%1.3f',x),eeg_supplemental_table.PValue,'UniformOutput',false);
 writetable(eeg_supplemental_table,[results_folder,'SuppTable1.csv']);
 
@@ -972,33 +1003,33 @@ fprintf(['\nLooking only at super-hour EEGs,\n'...
 
 % I will do a log-rank test to compare the time to first PST, and consider
 % the end of the EEG as censoring
-x = nan(size(new_table,1),2);
-x(:,1) = new_table.total_time_first_pst; % time to first pst (nan if never happens)
-x(:,2) = isnan(new_table.total_time_first_pst); % 1 if no PST before end of EEG
-x(isnan(new_table.total_time_first_pst),1) = new_table.duration_minutes(isnan(new_table.total_time_first_pst)); % set the time for the nan rows to be the EEG duration
 
-% separate drug resistant and drug responsive
+% Make an nx2 table where the first column is the time to either the first
+% PST or GPFA or the total eeg duration, whichever happens first, and the
+% second column indicates if the data is censored (if the eeg ended before 
+% the feature occurrence).
+x = nan(size(new_table,1),2);
+x(:,1) = new_table.total_time_first_pst;
+x(:,2) = isnan(new_table.total_time_first_pst);
+x(isnan(new_table.total_time_first_pst),1) = new_table.duration_minutes(isnan(new_table.total_time_first_pst));
+
 x1 = x(new_table.drug_resistant==1,:);
 x2 = x(new_table.drug_resistant==0,:);
 
-% My Kaplan-Meier plot
-log_rank_erin(x1,x2,results_folder,'PST');
+% My log-rank plot
+[p,Z] = log_rank_erin(x1,x2,results_folder,'PST');
 
-% prep for R (log rank test done in R)
+% prep for R
 all_x = nan(size(new_table,1),3);
-
-% concatenate drug resistant and drug responsive together
-all_x(:,1) = [x1(:,1);x2(:,1)]; 
+all_x(:,1) = [x1(:,1);x2(:,1)];
 all_x(:,2) = [x1(:,2);x2(:,2)]; 
-all_x(:,3) = [ones(size(x1,1),1);zeros(size(x2,1),1)]; % the third column indicates if drug resistant
+all_x(:,3) = [ones(size(x1,1),1);zeros(size(x2,1),1)];
 
-% This table has the survival time (either EEG duration or time to first
-% PST) in the first column, whether PST was observed in the second column,
-% and drug resistance in the third column
+
 r_table = table(all_x(:,1),~all_x(:,2),all_x(:,3),'VariableNames',{'survtime','observed','resistant'});
 
-% export table for R
-writetable(r_table,[r_data_path,'r_table_pst.csv']);
+% export table
+writetable(r_table,'../data/r_table_pst.csv');
 
 
 
