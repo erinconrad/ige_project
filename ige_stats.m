@@ -17,7 +17,7 @@ function ige_stats
 doing_from_github = 0; % Set to 1 if running the code from the github repository (most people)
 
 % File paths
-csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-03-21_1557.csv'; % point to the data
+csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-04-10_1654.csv'; % point to the data
 results_folder = '../results/'; % point to where you want to save results
 r_data_path = '../data/'; % where to save a table of data to be used for R analysis
 
