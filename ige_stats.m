@@ -11,7 +11,7 @@ github repository.
 Erin Conrad, 2020
 %}
 
-function parameter = ige_stats
+function ige_stats
 
 %% Parameters for users to change
 doing_from_github = 0; % Set to 1 if running the code from the github repository (most people)
@@ -118,6 +118,7 @@ age_eeg_col = parameter(33).column;
 
 
 %% Prep new table
+fprintf('\nPrepping data table...');
 new_table = data;
 
 total_eegs = 0;
@@ -194,7 +195,7 @@ for i = 1:size(data,1)-1
         elseif strcmp(dur_text,'41 minutes') == 1 % correction for mistake in text
             dur_num = duration('00:41','InputFormat','hh:mm');
         else
-            fprintf('Warning, duration text for row %d says %s\n',i,dur_text);
+            %fprintf('Warning, duration text for row %d says %s\n',i,dur_text);
             dur_num = 0;
         end
         total_dur = dur_num + total_dur;
@@ -296,7 +297,7 @@ for i = 1:size(data,1)-1
                     elseif strcmp(cur_dur,'41 minutes') == 1 % correction for mistake in text
                         cur_dur = duration('00:41','InputFormat','hh:mm');
                     else
-                        fprintf('Warning, duration text for row %d says %s\n',i,cur_dur);
+                        %fprintf('Warning, duration text for row %d says %s\n',i,cur_dur);
                         cur_dur = 0;
                     end
                     if cur_dur == 0
@@ -401,6 +402,9 @@ if isempty(dr_nan) == 0
 end
 
 %% Print some random rows to test that I didn't mess up
+fprintf('Done.\n----------------------------------------------------\n');
+
+fprintf('\n\nNow displaying random entries to test that it agrees with original data table:\n\n');
 if display_random_entries
     for i = 1:10
         r = randi(size(new_table,1));
@@ -414,7 +418,8 @@ end
 Now do some statistics
 ********************************
 %}
-
+fprintf('\n----------------------------------------------------\n');
+fprintf('Now doing statistics...\n\n');
 %% Relationship between PST and VPA (I don't report this)
 % do chi squared
 [tbl,chi2,pval,labels] = crosstab(new_table.pst,...
@@ -425,6 +430,7 @@ Now do some statistics
 
 
 %% Wilcoxon rank sums for duration and age at first eeg
+fprintf('Comparing continuous parameters between drug resistant and drug responsive patients:\n\n');
 for pdur = [24 33]
     name = parameter(pdur).name;
     [pval,~,stats] = ranksum(new_table.(name)(new_table.drug_resistant == 1),...
@@ -521,6 +527,8 @@ end
 
 
 %% Statistical test comparing time to first occurrence of feature
+fprintf('\n----------------------------------------------------\n');
+fprintf('\n\nComparing time to first occurrence of different features:\n\n');
 % Get times to first occurrences
 all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
     new_table.total_time_first_pst,new_table.total_time_first_gpfa];
@@ -548,6 +556,8 @@ fprintf(['The median time to first occurrence of feature is:\n'...
 % X axis is duration of eeg
 % Y axis is number of patients whose eeg is that duration or lower who have
 % the feature of interest
+fprintf('\n----------------------------------------------------\n');
+fprintf('\n\nMaking figure showing percentage of patients with feature by certain times...\n\n');
 fig1 = figure;
 set(fig1,'position',[100 378 1324 422])
 
@@ -763,13 +773,14 @@ clinical_table.Parameter{6} = 'Tried VPA?';
 clinical_table.Parameter{9} = 'Duration (minutes)';
 clinical_table.Parameter{10} = 'Captured sleep?';
 
-fprintf('\n\nTable 1:\n');
+fprintf('\n----------------------------------------------------\n');
+fprintf('\n\nClinical table:\n');
 clinical_table
 fprintf('\n');
 writetable(clinical_table,[results_folder,'Table1.csv']);
 
-
-fprintf('\n\nTable2:\n');
+fprintf('\n----------------------------------------------------\n');
+fprintf('\n\nFeature duration table:\n');
 duration_feature_table
 fprintf('\n');
 writetable(duration_feature_table,[results_folder,'Table2.csv']);
@@ -844,8 +855,8 @@ eeg_feature_table.Feature{5} = 'GLVFA';
 eeg_feature_table.Feature{6} = 'Focal discharges';
 eeg_feature_table.Feature{7} = 'Focal slowing';
 eeg_feature_table.Feature{8} = 'PST or GPFA';
-
-fprintf('\n\nTable3:\n');
+fprintf('\n----------------------------------------------------\n');
+fprintf('\n\nEEG feature table:\n');
 eeg_feature_table
 fprintf('\n');
 writetable(eeg_feature_table,[results_folder,'Table3.csv']);
@@ -939,11 +950,15 @@ writetable(eeg_supplemental_table,[results_folder,'SuppTable1.csv']);
 
 
 %% Is PST more frequent in sleep than wakefulness?
+if 0
 fprintf('%d patients (%1.1f%%) had PST while awake, and %d (%1.1f%%) had PST while asleep.\n',...
     sum(new_table.pst___1),sum(new_table.pst___1)/length(new_table.pst___1)*100,...
     sum(new_table.pst___2),sum(new_table.pst___2)/length(new_table.pst___2)*100);
+end
 
 %% Stratify by duration (<1 hour, 1-24 hours, >=24 hours)
+fprintf('\n----------------------------------------------------\n');
+fprintf('\n\nNow controlling for duration by stratification:\n');
 sub_hour = new_table.duration_minutes <= 60;
 
 [tbl] = crosstab(new_table.drug_resistant(sub_hour),...
@@ -966,6 +981,8 @@ fprintf(['\nLooking only at super-hour EEGs,\n'...
 
 
 %% Log-rank test for survival analysis
+fprintf('\n----------------------------------------------------\n');
+fprintf('\n\nNow doing survival analysis:\n');
 % survival analysis: analyzes the expected duration of time until one or more events happen
 % The log-rank test compares the survival times of two or more groups
 % Censoring is a form of missing data problem in which time to event is not observed
@@ -982,6 +999,7 @@ x1 = x(new_table.drug_resistant==1,:);
 x2 = x(new_table.drug_resistant==0,:);
 
 % My Kaplan-Meier plot
+fprintf('Making plot...\n')
 log_rank_erin(x1,x2,results_folder,'PST');
 
 % prep for R (log rank test done in R)
@@ -1000,6 +1018,7 @@ r_table = table(all_x(:,1),~all_x(:,2),all_x(:,3),'VariableNames',{'survtime','o
 % export table for R
 writetable(r_table,[r_data_path,'r_table_pst.csv']);
 
-
+fprintf('\n----------------------------------------------------\n');
+fprintf('End of file. All tables and figures should be saved to your results folder.\nThe log-rank test can be done in R using the data file saved to your data folder.\n\n');
 
 end
