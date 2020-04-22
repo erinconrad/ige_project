@@ -1,4 +1,4 @@
-function log_rank_erin(x1,x2,results_folder,feature)
+function log_rank_erin(x1,x2,results_folder,feature,duration)
 
 %{
 This function is called by the main function ige_stats and generates the
@@ -100,7 +100,18 @@ end
 
 %% Kaplan Meier plot
 figure
-set(gcf,'position',[215 440 1226 358]);
+set(gcf,'position',[215 700 900 600]);
+pl1 = subplot(2,1,1);
+pl1_pos = get(pl1,'position');
+%set(pl1,'position',[pl1_pos(1) pl1_pos(2) pl1_pos(3)*2/3 pl1_pos(4)])
+histogram(duration/60,30,'facecolor','k')
+xlabel('Total EEG duration (hours)')
+ylabel('Number of patients')
+set(gca,'fontsize',20)
+annotation('textbox',[0.03 0.88 0.1 0.1],'String','A',...
+    'linestyle','none','fontsize',35);
+
+subplot(2,1,2)
 l1=plot([1:J]/60,surv_prob(:,1),'k','linewidth',2); % percentage of surviving things over time for each group
 hold on
 l2=plot([1:J]/60,surv_prob(:,2),'k--','linewidth',2);
@@ -111,6 +122,8 @@ ylim([0 1])
 xlabel('Time (hours)')
 ylabel(sprintf('Probability of not having %s',feature))
 set(gca,'fontsize',20)
+annotation('textbox',[0.03 0.45 0.1 0.1],'String','B',...
+    'linestyle','none','fontsize',35);
 print(gcf,[results_folder,'surv_plot_',feature],'-depsc')
 
 

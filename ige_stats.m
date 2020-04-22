@@ -21,7 +21,7 @@ csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-04-10_1654.csv'; % point to t
 results_folder = '../results/'; % point to where you want to save results
 r_data_path = '../data/'; % where to save a table of data to be used for R analysis
 
-display_random_entries = 1; % Set to 1 to display data for random patients, to double check that it agrees with data table
+display_random_entries = 0; % Set to 1 to display data for random patients, to double check that it agrees with data table
 
 %% Other parameters
 
@@ -64,7 +64,7 @@ parameter(23).name = 'exclude_clinical___0';
 parameter(24).name = 'duration_minutes'; % this is not in the original table; it will be a new column
 parameter(25).name = 'gsw';
 parameter(26).name = 'psw';
-parameter(27).name = 'pst';
+parameter(27).name = 'gpt'; %pst
 parameter(28).name = 'gpfa';
 parameter(29).name = 'glvfa';
 parameter(30).name = 'slow';
@@ -88,7 +88,7 @@ parameter(45).name = 'pst_or_gpfa_asleep';
 % Pretty names for figure
 parameter(38).pretty_name = 'GSW'; 
 parameter(39).pretty_name = 'PSW';
-parameter(40).pretty_name = 'PST';
+parameter(40).pretty_name = 'GPT';
 parameter(41).pretty_name = 'GPFA';
 
 % tell it which parameters are the awake version of the one below it
@@ -356,7 +356,7 @@ new_table = addvars(new_table,total_time_first_gpfa);
 new_table = addvars(new_table,total_time_first_pst_or_gpfa);
 
 % Add gpt or gpfa
-pst_or_gpfa = any([new_table.pst,new_table.gpfa],2);
+pst_or_gpfa = any([new_table.gpt,new_table.gpfa],2);
 pst_or_gpfa_awake = any([new_table.pst___1,new_table.gpfa___1],2);
 pst_or_gpfa_asleep = any([new_table.pst___2,new_table.gpfa___2],2);
 
@@ -422,7 +422,7 @@ fprintf('\n----------------------------------------------------\n');
 fprintf('Now doing statistics...\n\n');
 %% Relationship between PST and VPA (I don't report this)
 % do chi squared
-[tbl,chi2,pval,labels] = crosstab(new_table.pst,...
+[tbl,chi2,pval,labels] = crosstab(new_table.gpt,...
     new_table.vpa);
 
 % Do Fisher exact test
@@ -445,6 +445,14 @@ for pdur = [24 33]
     parameter(pdur).stats.other = stats;
     parameter(pdur).stats.avg_dur = [nanmean(new_table.(name)(new_table.drug_resistant == 1)),...
         nanmean(new_table.(name)(new_table.drug_resistant == 0))];
+    parameter(pdur).stats.median_dur = [nanmedian(new_table.(name)(new_table.drug_resistant == 1)),...
+        nanmedian(new_table.(name)(new_table.drug_resistant == 0))];
+    parameter(pdur).stats.iqr = [prctile(new_table.(name)(new_table.drug_resistant == 1),25),...
+        prctile(new_table.(name)(new_table.drug_resistant == 1),75);...
+        prctile(new_table.(name)(new_table.drug_resistant == 0),25),...
+        prctile(new_table.(name)(new_table.drug_resistant == 0),75)];
+    parameter(pdur).stats.std = [nanstd(new_table.(name)(new_table.drug_resistant == 1)),...
+        nanstd(new_table.(name)(new_table.drug_resistant == 0))];
     fprintf(['\nAverage %s is %1.1f m for drug resistant patients and \n'...
         '%1.1f m for drug responsive patients (Wilcoxon rank sum: p = %1.3f).\n'],...
         name,parameter(pdur).stats.avg_dur(1),parameter(pdur).stats.avg_dur(2),parameter(pdur).stats.p);
@@ -454,7 +462,7 @@ end
 % Also loop through and do WRSs for other parameters
 duration_feature_table = cell2table(cell(0,5),'VariableNames',{'Feature',...
     'AverageDurationWithFeature','AverageDurationWithoutFeature','U','p'});
-for p = [25:32,43]
+for p = [25:28,43,29:32]
     % get appropriate column
     name = parameter(p).name;
     
@@ -474,10 +482,18 @@ for p = [25:32,43]
     end
 
     if isequal(pval,alt_pval) == 0, error('what\n'); end
+    
+    % Get median and IQR
+    with_feat = sprintf('%1.1f (%1.1f-%1.1f)',nanmedian(new_table.duration_minutes(par == 1)),...
+        prctile(new_table.duration_minutes(par == 1),25),...
+        prctile(new_table.duration_minutes(par == 1),75));
+    without_feat = sprintf('%1.1f (%1.1f-%1.1f)',nanmedian(new_table.duration_minutes(par == 0)),...
+        prctile(new_table.duration_minutes(par == 0),25),...
+        prctile(new_table.duration_minutes(par == 0),75));
 
     duration_feature_table = [duration_feature_table;...
-        cell2table({name,nanmean(new_table.duration_minutes(par == 1)),...
-        nanmean(new_table.duration_minutes(par == 0)),U,pval},'VariableNames',{'Feature',...
+        cell2table({name,with_feat,...
+        without_feat,U,pval},'VariableNames',{'Feature',...
     'AverageDurationWithFeature','AverageDurationWithoutFeature','U','p'})];
 
     if 0
@@ -491,16 +507,14 @@ end
 % Reformat table
 duration_feature_table.Feature{1} = 'GSW';
 duration_feature_table.Feature{2} = 'PSW';
-duration_feature_table.Feature{3} = 'PST';
+duration_feature_table.Feature{3} = 'GPT';
 duration_feature_table.Feature{4} = 'GPFA';
-duration_feature_table.Feature{5} = 'GLVFA';
-duration_feature_table.Feature{6} = 'Focal discharges';
-duration_feature_table.Feature{7} = 'Focal slowing';
-duration_feature_table.Feature{8} = 'PST or GPFA';
-duration_feature_table.AverageDurationWithFeature = ...
-    arrayfun(@(x)sprintf('%1.1f',x),duration_feature_table.AverageDurationWithFeature,'UniformOutput',false);
-duration_feature_table.AverageDurationWithoutFeature = ...
-    arrayfun(@(x)sprintf('%1.1f',x),duration_feature_table.AverageDurationWithoutFeature,'UniformOutput',false);
+duration_feature_table.Feature{5} = 'GPT or GPFA';
+duration_feature_table.Feature{6} = 'GLVFA';
+duration_feature_table.Feature{7} = 'Focal discharges';
+duration_feature_table.Feature{8} = 'Focal slowing';
+
+
 
 % Add asterisks to p
 p_stars = cell(length(duration_feature_table.p),1);
@@ -532,7 +546,7 @@ fprintf('\n\nComparing time to first occurrence of different features:\n\n');
 % Get times to first occurrences
 all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
     new_table.total_time_first_pst,new_table.total_time_first_gpfa];
-
+times_nan = isnan(all_times);
 
 % Kruskall wallis with post-hoc comparisons
 [p,tbl,stats] = kruskalwallis(all_times,[],'off');
@@ -540,17 +554,78 @@ all_times = [new_table.total_time_first_gsw,new_table.total_time_first_psw,...
 % Post-hoc dunn-sidak tests
 c = multcompare(stats,'CType','dunn-sidak','Display','off');
 
+% Now confirm the significance using an alternate method
+% Find paired observations
+for i = [2,3]
+    if i == 2
+        which_feat = 'psw';
+    elseif i == 3
+        which_feat = 'gpt';
+    end
+    
+    x = all_times(:,1); % gsw
+    y = all_times(:,i); % 2 = psw, 3 = pst (gpt)
+    paired_rows = find(~any(isnan([x,y]),2));
+    unpaired_rows = find(any(isnan([x,y]),2));
+
+    % Just do a sign rank test, throw away unpaired observations
+    p_paired = signrank(x(paired_rows),y(paired_rows));
+
+    % Just do a rank sum test, throw away paired observations
+    p_unpaired = ranksum(x(unpaired_rows),y(unpaired_rows));
+
+    % Fisher's test to combine the p-values
+    X_2 = -2 * (log(p_paired)+log(p_unpaired));
+    sum_p = 1-chi2cdf(X_2,2*2);
+
+    fprintf(['As a conservative test, if we instead do a separate signrank test\n'...
+        'and ranksum test and combine p-values with Fisher''s test, this yields\n'...
+        'comparing gsw against %s \n'...
+        'p = %1.4f, alpha = %1.4f\n'],which_feat,sum_p,0.05/size(c,1));
+end
+
 % Print the stats
-fprintf(['The median time to first occurrence of feature is:\n'...
-    '%1.1f minutes for GSW,\n'...
-    '%1.1f minutes for PSW,\n'...
-    '%1.1f minutes for PST,\n'...
-    '%1.1f minutes for GPFA.\n'...
+fprintf(['The median (IQR) time to first occurrence of feature is:\n'...
+    '%1.1f minutes (%1.1f-%1.1f) for GSW,\n'...
+    '%1.1f minutes (%1.1f-%1.1f) for PSW,\n'...
+    '%1.1f minutes (%1.1f-%1.1f) for PST,\n'...
+    '%1.1f minutes (%1.1f-%1.1f) for GPFA.\n'...
     'Kruskall-Wallis p = %1.3f\n'],nanmedian(new_table.total_time_first_gsw),...
+    prctile(new_table.total_time_first_gsw,25),...
+    prctile(new_table.total_time_first_gsw,75),...
     nanmedian(new_table.total_time_first_psw),...
+    prctile(new_table.total_time_first_psw,25),...
+    prctile(new_table.total_time_first_psw,75),...
     nanmedian(new_table.total_time_first_pst),...
+    prctile(new_table.total_time_first_pst,25),...
+    prctile(new_table.total_time_first_pst,75),...
     nanmedian(new_table.total_time_first_gpfa),...
+    prctile(new_table.total_time_first_gpfa,25),...
+    prctile(new_table.total_time_first_gpfa,75),...
     p);    
+
+
+% output for R
+all_times_2 = all_times;
+for j = 1:size(all_times_2,2)
+    % For each column, replace nans with eeg duration (non nans will be
+    % time to first occurrence)
+    all_times_2(isnan(all_times_2(:,j)),j) = new_table.duration_minutes(isnan(all_times_2(:,j)));
+end
+
+all_times_r = zeros(size(all_times,1)*4,3);
+% concatenate to make r friendly
+all_times_r(:,1) = [all_times_2(:,1);all_times_2(:,2);all_times_2(:,3);all_times_2(:,4)];
+all_times_r(:,2) = [times_nan(:,1);times_nan(:,2);times_nan(:,3);times_nan(:,4)]; % is it censored
+all_times_r(:,3) = [ones(size(all_times,1),1)*1;ones(size(all_times,1),1)*2;... % what group is it in
+    ones(size(all_times,1),1)*3;ones(size(all_times,1),1)*4];
+
+r_times = table(all_times_r(:,1),~all_times_r(:,2),all_times_r(:,3),'VariableNames',{'survtime','observed','resistant'});
+
+% export table for R
+writetable(r_times,[r_data_path,'r_all_features.csv']);
+
+
 
 %% Figure for percentage of patients with feature by certain times
 % X axis is duration of eeg
@@ -703,8 +778,9 @@ clinical_table = [clinical_table;cell2table({'Women',...
 % Age at first eeg
 p = 33;
 clinical_table = [clinical_table;cell2table({parameter(p).name,...
-    sprintf('%1.1f',parameter(p).stats.avg_dur(2)),sprintf('%1.1f',parameter(p).stats.avg_dur(1))...
-    sprintf('%1.2f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
+    sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(2),parameter(p).stats.std(2)),...
+    sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(1),parameter(p).stats.std(1))...
+    sprintf('%1.1f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
     'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
 
 % Tried VPA
@@ -735,9 +811,11 @@ clinical_table = [clinical_table;cell2table({'No',...
 % EEG duration
 p = 24;
 clinical_table = [clinical_table;cell2table({parameter(p).name,...
-    sprintf('%1.1f',parameter(p).stats.avg_dur(2)),...
-    sprintf('%1.1f',parameter(p).stats.avg_dur(1)),...
-    sprintf('%1.2f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
+    sprintf('%1.1f (%1.1f-%1.1f)',parameter(p).stats.median_dur(2),...
+    parameter(p).stats.iqr(2,1),parameter(p).stats.iqr(2,2)),...
+    sprintf('%1.1f (%1.1f-%1.1f)',parameter(p).stats.median_dur(1),...
+    parameter(p).stats.iqr(1,1),parameter(p).stats.iqr(1,2)),...
+    sprintf('%1.1f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
     'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
 
 % Captured sleep
@@ -768,10 +846,10 @@ clinical_table = [clinical_table;cell2table({'No',...
 
 % Format columns nicely
 clinical_table.Parameter{1} = 'Total number';
-clinical_table.Parameter{5} = 'Age at first EEG';
-clinical_table.Parameter{6} = 'Tried VPA?';
-clinical_table.Parameter{9} = 'Duration (minutes)';
-clinical_table.Parameter{10} = 'Captured sleep?';
+clinical_table.Parameter{5} = 'Age at first EEG in study mean (std)';
+clinical_table.Parameter{6} = 'Tried VPA';
+clinical_table.Parameter{9} = 'Total EEG duration (minutes) median (IQR)';
+clinical_table.Parameter{10} = 'EEG captured sleep';
 
 fprintf('\n----------------------------------------------------\n');
 fprintf('\n\nClinical table:\n');
@@ -796,7 +874,7 @@ all_ci = [];
 all_perc_resistant = [];
 all_perc_responsive = [];
 
-for p = [25:32,43]
+for p = [25:28,43,29:32]
     if strcmp(parameter(p).name,'duration_minutes') == 1, continue; end
     if strcmp(parameter(p).name,'sex') == 1, continue; end
     
@@ -849,12 +927,14 @@ eeg_feature_table = table(all_names,str_responsive,str_resistant,or_str,all_p_va
 eeg_feature_table.PValue = arrayfun(@(x)sprintf('%1.3f',x),eeg_feature_table.PValue,'UniformOutput',false);
 eeg_feature_table.Feature{1} = 'GSW';
 eeg_feature_table.Feature{2} = 'PSW';
-eeg_feature_table.Feature{3} = 'PST';
+eeg_feature_table.Feature{3} = 'GPT';
 eeg_feature_table.Feature{4} = 'GPFA';
-eeg_feature_table.Feature{5} = 'GLVFA';
-eeg_feature_table.Feature{6} = 'Focal discharges';
-eeg_feature_table.Feature{7} = 'Focal slowing';
-eeg_feature_table.Feature{8} = 'PST or GPFA';
+eeg_feature_table.Feature{5} = 'GPT or GPFA';
+eeg_feature_table.Feature{6} = 'GLVFA';
+eeg_feature_table.Feature{7} = 'Focal discharges';
+eeg_feature_table.Feature{8} = 'Focal slowing';
+
+
 fprintf('\n----------------------------------------------------\n');
 fprintf('\n\nEEG feature table:\n');
 eeg_feature_table
@@ -873,7 +953,7 @@ all_perc_resistant = [];
 all_perc_responsive = [];
 all_ci = [];
 
-for p = [7:16,19:22,44:45] %wake and sleep eeg features
+for p = [7:14,44:45,15:16,19:22] %wake and sleep eeg features
     if strcmp(parameter(p).name,'duration_minutes') == 1, continue; end
     if strcmp(parameter(p).name,'sex') == 1, continue; end
     
@@ -931,18 +1011,19 @@ eeg_supplemental_table.Feature{1} = 'GSW awake';
 eeg_supplemental_table.Feature{2} = 'GSW asleep';
 eeg_supplemental_table.Feature{3} = 'PSW awake';
 eeg_supplemental_table.Feature{4} = 'PSW asleep';
-eeg_supplemental_table.Feature{5} = 'PST awake';
-eeg_supplemental_table.Feature{6} = 'PST asleep';
+eeg_supplemental_table.Feature{5} = 'GPT awake';
+eeg_supplemental_table.Feature{6} = 'GPT asleep';
 eeg_supplemental_table.Feature{7} = 'GPFA awake';
 eeg_supplemental_table.Feature{8} = 'GPFA asleep';
-eeg_supplemental_table.Feature{9} = 'GLVFA awake';
-eeg_supplemental_table.Feature{10} = 'GLVFA asleep';
-eeg_supplemental_table.Feature{11} = 'Focal discharges awake';
-eeg_supplemental_table.Feature{12} = 'Focal discharges asleep';
-eeg_supplemental_table.Feature{13} = 'Focal slowing awake';
-eeg_supplemental_table.Feature{14} = 'Focal slowing asleep';
-eeg_supplemental_table.Feature{15} = 'PST or GPFA awake';
-eeg_supplemental_table.Feature{16} = 'PST or GPFA asleep';
+eeg_supplemental_table.Feature{9} = 'GPT or GPFA awake';
+eeg_supplemental_table.Feature{10} = 'GPT or GPFA asleep';
+eeg_supplemental_table.Feature{11} = 'GLVFA awake';
+eeg_supplemental_table.Feature{12} = 'GLVFA asleep';
+eeg_supplemental_table.Feature{13} = 'Focal discharges awake';
+eeg_supplemental_table.Feature{14} = 'Focal discharges asleep';
+eeg_supplemental_table.Feature{15} = 'Focal slowing awake';
+eeg_supplemental_table.Feature{16} = 'Focal slowing asleep';
+
 
 
 eeg_supplemental_table.PValue = arrayfun(@(x)sprintf('%1.3f',x),eeg_supplemental_table.PValue,'UniformOutput',false);
@@ -962,7 +1043,7 @@ fprintf('\n\nNow controlling for duration by stratification:\n');
 sub_hour = new_table.duration_minutes <= 60;
 
 [tbl] = crosstab(new_table.drug_resistant(sub_hour),...
-    new_table.pst(sub_hour));
+    new_table.gpt(sub_hour));
 [~,pval,stats] = fishertest(tbl);
 
 fprintf(['\nLooking only at sub-hour EEGs,\n'...
@@ -971,7 +1052,7 @@ fprintf(['\nLooking only at sub-hour EEGs,\n'...
     tbl(2,2),tbl(2,2)/(tbl(2,2)+tbl(2,1))*100,stats.OddsRatio,pval);
 
 [tbl] = crosstab(new_table.drug_resistant(~sub_hour),...
-    new_table.pst(~sub_hour));
+    new_table.gpt(~sub_hour));
 [~,pval,stats] = fishertest(tbl);
 
 fprintf(['\nLooking only at super-hour EEGs,\n'...
@@ -979,7 +1060,22 @@ fprintf(['\nLooking only at super-hour EEGs,\n'...
     '(Fisher exact test: odds-ratio %1.1f, p = %1.3f)\n'],tbl(1,2),tbl(1,2)/(tbl(1,2)+tbl(1,1))*100,...
     tbl(2,2),tbl(2,2)/(tbl(2,2)+tbl(2,1))*100,stats.OddsRatio,pval);
 
+%{
+% Are all the drug resistant patients in the >1 hr category?
+fprintf('\nAmongst the sub-hour EEGs, %d of %d patients (%1.1f%%) were resistant.\n',...
+    sum(new_table.drug_resistant(sub_hour)),sum(sub_hour),...
+    sum(new_table.drug_resistant(sub_hour))/sum(sub_hour)*100);
 
+fprintf('\nAmongst the super-hour EEGs, %d of %d patients (%1.1f%%) were resistant.\n',...
+    sum(new_table.drug_resistant(~sub_hour)),sum(~sub_hour),...
+    sum(new_table.drug_resistant(~sub_hour))/sum(~sub_hour)*100);
+
+[tbl] = crosstab(new_table.drug_resistant,...
+   (sub_hour));
+[~,pval,stats] = fishertest(tbl);
+pval
+%}
+    
 %% Log-rank test for survival analysis
 fprintf('\n----------------------------------------------------\n');
 fprintf('\n\nNow doing survival analysis:\n');
@@ -1000,7 +1096,7 @@ x2 = x(new_table.drug_resistant==0,:);
 
 % My Kaplan-Meier plot
 fprintf('Making plot...\n')
-log_rank_erin(x1,x2,results_folder,'PST');
+log_rank_erin(x1,x2,results_folder,'GPT',new_table.duration_minutes);
 
 % prep for R (log rank test done in R)
 all_x = nan(size(new_table,1),3);
