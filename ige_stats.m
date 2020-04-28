@@ -1040,6 +1040,22 @@ fprintf('%d patients (%1.1f%%) had PST while awake, and %d (%1.1f%%) had PST whi
     sum(new_table.pst___2),sum(new_table.pst___2)/length(new_table.pst___2)*100);
 end
 
+%% Test if I redefine drug resistant to require VPA use, what is association with GPT
+% Define new drug resistant group
+dr_plus_vpa = new_table.drug_resistant & new_table.vpa;
+
+% Fisher exact test
+tbl = crosstab(dr_plus_vpa,new_table.gpt);
+[~,pval,stats] = fishertest(tbl);
+
+fprintf(['Requiring a trial of VPA for drug-resistance,\n'...
+    '%d/%d (%1.1f%%) drug-responsive patients had GPT, and\n'...
+    '%d/%d (%1.1f%%) drug-resistant patients had GPT\n'...
+    '(Fisher exact test: OR %1.1f, p = %1.3f).\n\n'],...
+    tbl(1,2),(tbl(1,2)+tbl(1,1)),tbl(1,2)/(tbl(1,2)+tbl(1,1))*100,...
+    tbl(2,2),(tbl(2,2)+tbl(2,1)),tbl(2,2)/(tbl(2,2)+tbl(2,1))*100,...
+    stats.OddsRatio,pval);
+
 %% Stratify by duration (<1 hour, 1-24 hours, >=24 hours)
 fprintf('\n----------------------------------------------------\n');
 fprintf('\n\nNow controlling for duration by stratification:\n');
