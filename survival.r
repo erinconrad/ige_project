@@ -6,8 +6,8 @@
 # https://cran.r-project.org/web/packages/survival/index.html
 
 # Parameters
-#file_path<-"../data/r_table_pst.csv" # the file path for the table of time to first PST
-file_path<-"../data/r_all_features.csv" # file path for time to first occurrence of various features
+file_path<-"../data/r_table_pst.csv" # the file path for the table of time to first PST
+#file_path<-"../data/r_all_features.csv" # file path for time to first occurrence of various features
 
 # Import packages
 library(survival)
