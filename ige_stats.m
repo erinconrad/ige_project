@@ -14,7 +14,7 @@ Erin Conrad, 2020
 function ige_stats
 
 %% Parameters for users to change
-doing_from_github = 0; % Set to 1 if running the code from the github repository (most people)
+doing_from_github = 1; % Set to 1 if running the code from the github repository (most people)
 
 % File paths
 csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-04-10_1654.csv'; % point to the data
@@ -1127,23 +1127,8 @@ fprintf(['The Cochran-Mantel-Haenszel combined odds-ratio is:\n'...
 % continuity correction in R. Additionally, R gives 95% CI 0.9469063 9.9795373
 writematrix([tbl1,tbl2],[r_data_path,'cmh_table.csv']);
 
-%{
-% Are all the drug resistant patients in the >1 hr category?
-fprintf('\nAmongst the sub-hour EEGs, %d of %d patients (%1.1f%%) were resistant.\n',...
-    sum(new_table.drug_resistant(sub_hour)),sum(sub_hour),...
-    sum(new_table.drug_resistant(sub_hour))/sum(sub_hour)*100);
-
-fprintf('\nAmongst the super-hour EEGs, %d of %d patients (%1.1f%%) were resistant.\n',...
-    sum(new_table.drug_resistant(~sub_hour)),sum(~sub_hour),...
-    sum(new_table.drug_resistant(~sub_hour))/sum(~sub_hour)*100);
-
-[tbl] = crosstab(new_table.drug_resistant,...
-   (sub_hour));
-[~,pval,stats] = fishertest(tbl);
-pval
-%}
     
-%% Kaplan-Meier plot for time to first occurrence 
+%% Kaplan-Meier plot for time to first occurrence of diff features (not used)
 %{
 y = cell(4,1);
 y{1} = new_table.total_time_first_gsw;
