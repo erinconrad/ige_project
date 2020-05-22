@@ -96,6 +96,10 @@ eeg_parameters = [7:22,25:32];
 awake_parameters = 7:2:21;
 summary_parameters = 25:32;
 
+%% Make output directories if they don't exist
+if exist(results_folder,'dir') == 0, mkdir(results_folder); end
+if exist(r_data_path,'dir') == 0, mkdir(r_data_path); end
+
 %% Load csv file
 data = readtable(csv_path);
 
