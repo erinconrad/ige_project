@@ -435,10 +435,17 @@ for pdur = [24 33]
     name = parameter(pdur).name;
     [pval,~,stats] = ranksum(new_table.(name)(new_table.drug_resistant == 1),...
         new_table.(name)(new_table.drug_resistant == 0));
-    [pval_alt,~,U] = ranksum_output_u(new_table.(name)(new_table.drug_resistant == 1),...
-        new_table.(name)(new_table.drug_resistant == 0));
     
-    if pval ~= pval_alt, error('what\n'); end
+    if doing_from_github == 0
+        [pval_alt,~,U] = ranksum_output_u(new_table.(name)(new_table.drug_resistant == 1),...
+            new_table.(name)(new_table.drug_resistant == 0));
+        
+        if pval ~= pval_alt, error('what\n'); end
+    else
+        U = nan;
+    end
+    
+    
     
     parameter(pdur).stats.U = U;
     parameter(pdur).stats.p = pval;
