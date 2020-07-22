@@ -17,7 +17,7 @@ function ige_stats
 doing_from_github = 0; % Set to 1 if running the code from the github repository (most people)
 
 % File paths
-csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-07-19_1120.csv';%'IGEDatabase-DeidentifiedData_DATA_2020-04-10_1654.csv'; % point to the data
+csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-07-22_0952.csv';%'IGEDatabase-DeidentifiedData_DATA_2020-04-10_1654.csv'; % point to the data
 results_folder = '../results/'; % point to where you want to save results
 r_data_path = '../data/'; % where to save a table of data to be used for R analysis
 
@@ -88,6 +88,8 @@ parameter(47).name = 'age_onset';
 parameter(48).name = 'number_seizure_types';
 parameter(49).name = 'family_history';
 parameter(50).name = 'number_antiseizure_drugs';
+parameter(51).name = 'inc_hv_photic___1';
+parameter(52).name = 'inc_hv_photic___2';
 
 
 % Pretty names for figure
@@ -122,7 +124,7 @@ for i = 1:length(parameter)
         end
     end
 end
-feature_cols = parameter(7).column:parameter(22).column;
+feature_cols = [parameter(7).column:parameter(22).column,parameter(51).column,parameter(52).column];
 age_eeg_col = parameter(33).column;
 
 
@@ -437,6 +439,43 @@ fprintf('Now doing statistics...\n\n');
 % Do Fisher exact test
 [~,pval,stats] = fishertest(tbl);
 
+%% Relationship between GPT and syndrome
+% First, combine other/unknown
+ige_subtype = new_table.ige_subtype;
+ige_subtype(ige_subtype == 6) = 5;
+
+% do chi2
+[tbl,chi2,pval,labels] = crosstab(new_table.gpt,ige_subtype);
+
+% Follow it up with fisher exact tests, Bonferroni correcting for 10 (5 choose 2) tests:
+p = nan(10,1);
+[~,p(1)] = fishertest(tbl(:,[1,2]));% CAE vs JAE
+[~,p(2)] = fishertest(tbl(:,[1,3]));% CAE vs JME
+[~,p(3)] = fishertest(tbl(:,[1,4]));% CAE vs GTCA
+[~,p(4)] = fishertest(tbl(:,[1,5]));% CAE vs other
+[~,p(5)] = fishertest(tbl(:,[2,3]));% JAE vs JME
+[~,p(6)] = fishertest(tbl(:,[2,4]));% JAE vs GTCA
+[~,p(7)] = fishertest(tbl(:,[2,5]));% JAE vs other
+[~,p(8)] = fishertest(tbl(:,[3,4]));% JME vs GTCA
+[~,p(9)] = fishertest(tbl(:,[3,5]));% JME vs other
+[~,p(10)] = fishertest(tbl(:,[4,5]));% GTCA vs other
+
+p
+alpha_gpt_posthoc = 0.05/10
+
+%{
+It appears that GPT is enriched in the "other/unknown" group, which is
+interesting, however no individual comparison is significant after
+Bonferroni correcting
+%}
+
+%% Multivariate analysis controlling for subtype
+mdl = fitglm(new_table,'drug_resistant ~ gpt+ige_subtype','Distribution','binomial')
+
+%{
+no relationship between drug resistance and ige_subtype. Relationship
+between GPT and drug resistance persists.
+%}
 
 %% Wilcoxon rank sums for continuous parameters predicting drug responsiveness
 fprintf('Comparing continuous parameters between drug resistant and drug responsive patients:\n\n');
@@ -928,11 +967,19 @@ clinical_table = [clinical_table;cell2table({'Unknown',...
 
 % Number of seizure meds tried  
 p = 50;
-clinical_table = [clinical_table;cell2table({parameter(p).name,...
-    sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(2),parameter(p).stats.std(2)),...
-    sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(1),parameter(p).stats.std(1))...
-    sprintf('%1.1f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
-    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})]; 
+if parameter(p).stats.p < 0.001
+    clinical_table = [clinical_table;cell2table({parameter(p).name,...
+        sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(2),parameter(p).stats.std(2)),...
+        sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(1),parameter(p).stats.std(1))...
+        sprintf('%1.1f',parameter(p).stats.U),sprintf('<0.001')},...
+        'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})]; 
+else
+    clinical_table = [clinical_table;cell2table({parameter(p).name,...
+        sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(2),parameter(p).stats.std(2)),...
+        sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(1),parameter(p).stats.std(1))...
+        sprintf('%1.1f',parameter(p).stats.U),sprintf('%1.3f',parameter(p).stats.p)},...
+        'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})]; 
+end
 
 % Tried VPA
 clinical_table = [clinical_table;cell2table({'TriedVPA','','','',''},...
@@ -1002,7 +1049,7 @@ clinical_table.Parameter{1} = 'Total number';
 clinical_table.Parameter{11} = 'Age at epilepsy onset mean (std)';
 clinical_table.Parameter{12} = 'Age at first EEG in study mean (std)';
 clinical_table.Parameter{13} = 'Number of seizure types mean (std)';
-clinical_table.Parameter{18} = 'Number of *** tried mean (std)';
+clinical_table.Parameter{18} = 'Number of ASMs tried mean (std)';
 clinical_table.Parameter{19} = 'Tried VPA';
 clinical_table.Parameter{22} = 'Total EEG duration (minutes) median (IQR)';
 clinical_table.Parameter{23} = 'EEG captured sleep';
@@ -1192,6 +1239,35 @@ fprintf('%d patients (%1.1f%%) had PST while awake, and %d (%1.1f%%) had PST whi
     sum(new_table.pst___1),sum(new_table.pst___1)/length(new_table.pst___1)*100,...
     sum(new_table.pst___2),sum(new_table.pst___2)/length(new_table.pst___2)*100);
 end
+
+%% Count GPT/GPFA in sleep, wake, photic/HV
+fprintf('\nThe total number of GPT is %d and GPFA is %d.\n',...
+    sum(new_table.gpt),sum(new_table.gpfa));
+fprintf('\nOf GPT, %d (%1.1f%%) had GPT while awake and %d (%1.1f%%) had GPT while asleep.\n',...
+    sum(new_table.pst___1),sum(new_table.pst___1)/sum(new_table.gpt)*100,...
+    sum(new_table.pst___2),sum(new_table.pst___2)/sum(new_table.gpt)*100);
+fprintf(['\nOf GPT during wakefulness, %d (%1.1f%%) had GPT during HV,\n'... 
+    '%d (%1.1f%%) had GPT during photic, and %d (%1.1f%%) had GPT during other awake periods.\n'],...
+    sum(new_table.pst___3),sum(new_table.pst___3)/sum(new_table.pst___1)*100,...
+    sum(new_table.pst___4),sum(new_table.pst___4)/sum(new_table.pst___1)*100,...
+    sum(new_table.pst___5),sum(new_table.pst___5)/sum(new_table.pst___1)*100);
+
+fprintf('\nOf GPFA, %d (%1.1f%%) had GPFA while awake and %d (%1.1f%%) had GPFA while asleep.\n',...
+    sum(new_table.gpfa___1),sum(new_table.gpfa___1)/sum(new_table.gpfa)*100,...
+    sum(new_table.gpfa___2),sum(new_table.gpfa___2)/sum(new_table.gpfa)*100);
+fprintf(['\nOf GPFA during wakefulness, %d (%1.1f%%) had GPFA during HV,\n'... 
+    '%d (%1.1f%%) had GPFA during photic, and %d (%1.1f%%) had GPFA during other awake periods.\n'],...
+    sum(new_table.gpfa___3),sum(new_table.gpfa___3)/sum(new_table.gpfa___1)*100,...
+    sum(new_table.gpfa___4),sum(new_table.gpfa___4)/sum(new_table.gpfa___1)*100,...
+    sum(new_table.gpfa___5),sum(new_table.gpfa___5)/sum(new_table.gpfa___1)*100);
+
+% How many of these EEGs had photic/HV?
+fprintf(['\nOf patients who had GPT or GPFA during wakefulness, %d (%1.1f%%) had EEGs with HV,\n'...
+    'and %d (%1.1f%%) had EEGs with photic.\n'],...
+    sum(new_table.inc_hv_photic___1&(new_table.pst___1|new_table.gpfa___1)),...
+    sum(new_table.inc_hv_photic___1&(new_table.pst___1|new_table.gpfa___1))/sum(new_table.pst___1|new_table.gpfa___1)*100,...
+    sum(new_table.inc_hv_photic___2&(new_table.pst___1|new_table.gpfa___1)),...
+    sum(new_table.inc_hv_photic___2&(new_table.pst___1|new_table.gpfa___1))/sum(new_table.pst___1|new_table.gpfa___1)*100);
 
 %% Test if I redefine drug resistant to require VPA use, what is association with GPT
 % Define new drug resistant group
