@@ -17,13 +17,16 @@ function ige_stats
 doing_from_github = 0; % Set to 1 if running the code from the github repository (most people)
 
 % File paths
-csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-07-22_0952.csv';%'IGEDatabase-DeidentifiedData_DATA_2020-04-10_1654.csv'; % point to the data
+csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-07-29_1444.csv';%'IGEDatabase-DeidentifiedData_DATA_2020-04-10_1654.csv'; % point to the data
 results_folder = '../results/'; % point to where you want to save results
 r_data_path = '../data/'; % where to save a table of data to be used for R analysis
 
 display_random_entries = 0; % Set to 1 to display data for random patients, to double check that it agrees with data table
 
+do_plots = 1; % Set to 1 to make plots
+
 %% Other parameters
+ige_subtype_exclusion_records = [92,125]; % patients to exclude from IGE subtype analyses given incomplete documentation
 
 % Add path to extra tools
 if doing_from_github == 0
@@ -90,7 +93,11 @@ parameter(49).name = 'family_history';
 parameter(50).name = 'number_antiseizure_drugs';
 parameter(51).name = 'inc_hv_photic___1';
 parameter(52).name = 'inc_hv_photic___2';
-
+parameter(53).name = 'degree_relative';
+parameter(54).name = 'year_aeds';
+parameter(55).name = 'ige';
+parameter(56).name = 'exam';
+parameter(57).name = 'imaging';
 
 % Pretty names for figure
 parameter(38).pretty_name = 'GSW'; 
@@ -383,6 +390,27 @@ new_table(logical(eeg_row),:) = [];
 exclude = any([new_table.exclude_clinical___0==1,...
     new_table.exclude_eeg___0 == 1],2);
 
+% count reasons for clinical exclusion
+exclude_clinical = (new_table.exclude_clinical___0==1);
+poor_followup = exclude_clinical & (new_table.year_aeds==0);
+not_ige = exclude_clinical & ~(poor_followup) & (new_table.ige==0);
+abn_exam = exclude_clinical & ~(poor_followup) & ~(not_ige) & (new_table.exam==1);
+abn_imaging = exclude_clinical & ~(poor_followup) & ~(not_ige) & ~(abn_exam) & new_table.imaging==1;
+
+fprintf(['Of %d patients excluded for clinical reasons,\n'...
+    '%d were excluded for poor followup or <1 year AEDs,\n'...
+    '%d were excluded because not IGE\n'...
+    '%d were excluded for abnormal exam\n'...
+    'and %d were excluded for abnormal imaging.\n'],...
+    sum(exclude_clinical), sum(poor_followup), sum(not_ige),...
+    sum(abn_exam), sum(abn_imaging));
+
+%{
+  From my own review by eye of redcap, of 11 patients excluded for EEG criteria
+ who weren't excluded for clinical criteria as well, 9 had no outpatient 
+    EEGs available, and 2 had abnormal background (gen slow or in status)
+%}
+
 % Remove exclusion rows
 new_table(exclude,:) = [];
 fprintf('Excluded %d EEGs per criteria.\n',sum(exclude));
@@ -445,7 +473,10 @@ ige_subtype = new_table.ige_subtype;
 ige_subtype(ige_subtype == 6) = 5;
 
 % do chi2
-[tbl,chi2,pval,labels] = crosstab(new_table.gpt,ige_subtype);
+[tbl,chi2,pval,labels] = crosstab(new_table.gpt(~ismember(new_table.record_id,ige_subtype_exclusion_records)),...
+    ige_subtype(~ismember(new_table.record_id,ige_subtype_exclusion_records)));
+fprintf('\nRelationship between GPT and syndrome: chi2 = %1.1f, p = %1.3f.\n',...
+    chi2,pval);
 
 % Follow it up with fisher exact tests, Bonferroni correcting for 10 (5 choose 2) tests:
 p = nan(10,1);
@@ -460,8 +491,20 @@ p = nan(10,1);
 [~,p(9)] = fishertest(tbl(:,[3,5]));% JME vs other
 [~,p(10)] = fishertest(tbl(:,[4,5]));% GTCA vs other
 
+fprintf('\nIndividual comparisons (alpha = %1.3f):\n',0.05/10);
 p
-alpha_gpt_posthoc = 0.05/10
+
+fprintf('\nPatients with "other/unknown" subtype and gpt:\n')
+f=find(ige_subtype == 5 & new_table.gpt==1);
+for i = 1:length(f)
+    fprintf('Record id: %d\n',new_table.record_id(f(i)));
+end
+%{
+Record id 12: jeavon
+Record id 13: CAE evolving to JME, plus tonic seizures
+Record id 73: absence and GTC, onset age 35
+Record id 92: Poorly documented whether she ever had myoclonus or absence
+%}
 
 %{
 It appears that GPT is enriched in the "other/unknown" group, which is
@@ -470,7 +513,12 @@ Bonferroni correcting
 %}
 
 %% Multivariate analysis controlling for subtype
-mdl = fitglm(new_table,'drug_resistant ~ gpt+ige_subtype','Distribution','binomial')
+fprintf('\nMultivariate analysis looking at both GPT and IGE subtype as predictors for drug resistance:\n');
+temp_table  = new_table;
+temp_table.ige_subtype(temp_table.ige_subtype==6)=5;
+temp_table(ismember(temp_table.record_id,ige_subtype_exclusion_records),:) = []; % remove patients with unknown IGE subtype due to poor documentation
+mdl = fitglm(temp_table,'drug_resistant ~ gpt+ige_subtype','Distribution','binomial',...
+    'CategoricalVars',{'gpt','ige_subtype'})
 
 %{
 no relationship between drug resistance and ige_subtype. Relationship
@@ -681,7 +729,7 @@ r_times = table(all_times_r(:,1),~all_times_r(:,2),all_times_r(:,3),'VariableNam
 writetable(r_times,[r_data_path,'r_all_features.csv']);
 
 
-
+if do_plots
 %% Figure for percentage of patients with feature by certain times
 % X axis is duration of eeg
 % Y axis is number of patients whose eeg is that duration or lower who have
@@ -755,7 +803,7 @@ ylabel({'Percentage';'with occurrence in <1 hour'});
 annotation('textbox',[0.48 0.88 0.1 0.1],'String','B',...
     'linestyle','none','fontsize',35);
 print(fig1,[results_folder,'Figure3'],'-depsc')
-
+end
 
 
 %% Categorical Univariate stats
@@ -764,7 +812,6 @@ for p = [3:5,eeg_parameters,43:45,46,49]
     
     % Note that male == 1, female == 0
     % Tried VPA == 1, not tried VPA == 0
-    % CAE = 1, JAE = 2, JME = 3, GTCA = 4
     
     % get appropriate column
     name = parameter(p).name;
@@ -772,13 +819,22 @@ for p = [3:5,eeg_parameters,43:45,46,49]
     % Get number who have parameter
     par = new_table.(name);
     
-    if p == 46 % ige subtype
-        par(par == 6) = 5; % lump unknown and other into same group
+    if p == 46 % ige subtype % CAE = 1, JAE = 2, JME = 3, GTCA = 4
+        par(par == 6) = 5; % lump unknown and other into same group for IGE subtype
     end
     
-    % do chi squared to get table
-    [tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant,...
-            par);
+    if p == 49% family history
+        [tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant(~(par==3)),...
+                par(~(par==3))); % here I am excluding patients with unknown family history
+    elseif p == 46 % ige_subtype
+        [tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant(~(ismember(new_table.record_id,ige_subtype_exclusion_records))),...
+                par(~(ismember(new_table.record_id,ige_subtype_exclusion_records)))); % exclude patients who had unclassified subtype due to poor documentation
+    else
+        % do chi squared to get table
+        [tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant,...
+                par);
+        
+    end
     
     % Don't do the analysis if all par is 0
     if length(unique(par)) == 1
@@ -893,7 +949,7 @@ clinical_table = [clinical_table;cell2table({'GTCA',...
     sprintf('')},...
     'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
 
-clinical_table = [clinical_table;cell2table({'Unknown/other',...
+clinical_table = [clinical_table;cell2table({'Other',...
     sprintf('%d (%1.1f%%)',...
     parameter(p).stats.tbl(1,5),...
     parameter(p).stats.tbl(1,5)/(sum(parameter(p).stats.tbl(1,:)))*100),...
@@ -933,7 +989,28 @@ clinical_table = [clinical_table;cell2table({parameter(p).name,...
 clinical_table = [clinical_table;cell2table({'Family history','','','',''},...
     'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
 p = 49;
+clinical_table = [clinical_table;cell2table({'Yes',...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(1,2),...
+    parameter(p).stats.tbl(1,2)/(sum(new_table.drug_resistant==0))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,2),...
+    parameter(p).stats.tbl(2,2)/(sum(new_table.drug_resistant==1))*100),...
+    sprintf('%1.1f (%1.1f-%1.1f)',parameter(p).stats.OddsRatio,parameter(p).stats.ConfidenceInterval(1),...
+    parameter(p).stats.ConfidenceInterval(2)),...
+    sprintf('%1.3f',parameter(p).stats.p)},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
 
+clinical_table = [clinical_table;cell2table({'No',...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(1,1),...
+    parameter(p).stats.tbl(1,1)/(sum(new_table.drug_resistant==0))*100),...
+    sprintf('%d (%1.1f%%)',...
+    parameter(p).stats.tbl(2,1),...
+    parameter(p).stats.tbl(2,1)/(sum(new_table.drug_resistant==1))*100),...
+    '',''},...
+    'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+%{
 clinical_table = [clinical_table;cell2table({'Yes',...
     sprintf('%d (%1.1f%%)',...
     parameter(p).stats.tbl(1,1),...
@@ -964,6 +1041,7 @@ clinical_table = [clinical_table;cell2table({'Unknown',...
     parameter(p).stats.tbl(2,3)/(parameter(p).stats.tbl(2,2)+parameter(p).stats.tbl(2,1))*100),...
     '',''},...
     'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})];
+%}
 
 % Number of seizure meds tried  
 p = 50;
@@ -971,7 +1049,7 @@ if parameter(p).stats.p < 0.001
     clinical_table = [clinical_table;cell2table({parameter(p).name,...
         sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(2),parameter(p).stats.std(2)),...
         sprintf('%1.1f (%1.1f)',parameter(p).stats.avg_dur(1),parameter(p).stats.std(1))...
-        sprintf('%1.1f',parameter(p).stats.U),sprintf('<0.001')},...
+        sprintf('%1.1f',parameter(p).stats.U),sprintf('<0.001***')},...
         'VariableNames',{'Parameter','Responsive','Resistant','Statistic','P'})]; 
 else
     clinical_table = [clinical_table;cell2table({parameter(p).name,...
@@ -1049,10 +1127,10 @@ clinical_table.Parameter{1} = 'Total number';
 clinical_table.Parameter{11} = 'Age at epilepsy onset mean (std)';
 clinical_table.Parameter{12} = 'Age at first EEG in study mean (std)';
 clinical_table.Parameter{13} = 'Number of seizure types mean (std)';
-clinical_table.Parameter{18} = 'Number of ASMs tried mean (std)';
-clinical_table.Parameter{19} = 'Tried VPA';
-clinical_table.Parameter{22} = 'Total EEG duration (minutes) median (IQR)';
-clinical_table.Parameter{23} = 'EEG captured sleep';
+clinical_table.Parameter{17} = 'Number of ASMs tried mean (std)';
+clinical_table.Parameter{18} = 'Tried VPA';
+clinical_table.Parameter{21} = 'Total EEG duration (minutes) median (IQR)';
+clinical_table.Parameter{22} = 'EEG captured sleep';
 
 fprintf('\n----------------------------------------------------\n');
 fprintf('\n\nClinical table:\n');
@@ -1065,6 +1143,26 @@ fprintf('\n\nFeature duration table:\n');
 duration_feature_table
 fprintf('\n');
 writetable(duration_feature_table,[results_folder,'Table2.csv']);
+
+%% Some follow up analysis on family history
+%{
+family_history = new_table.family_history;
+degree_relative = new_table.degree_relative;
+any_fam = family_history == 1;
+first_degree_fam = family_history == 1 & degree_relative == 1;
+first_or_second = family_history == 1 & (degree_relative == 1 | degree_relative == 2);
+
+[tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant(~(family_history==3)),...
+            family_history(~(family_history==3)));
+[~,pval,stats] = fishertest(tbl);
+fprintf('\nFor any family history, OR = %1.1f, p = %1.3f\n',...
+    stats.OddsRatio,pval);
+
+[tbl,chi2,pval,labels] = crosstab(new_table.drug_resistant,...
+            new_table.family_history);
+fprintf('\nFor any family history including unknown as separate category, chi2 = %1.1f, p = %1.3f\n',...
+   chi2,pval);
+%}
 
 %% Make a summary table of univariate statistics for eeg features
 all_names = {};
@@ -1393,10 +1491,12 @@ x(isnan(new_table.total_time_first_pst),1) = new_table.duration_minutes(isnan(ne
 x1 = x(new_table.drug_resistant==1,:);
 x2 = x(new_table.drug_resistant==0,:);
 
+if do_plots
 % My Kaplan-Meier plot
 fprintf('Making plot...\n')
 log_rank_erin({x1,x2},results_folder,{'Drug resistant','Drug responsive','End of EEG'},...
     'GPT',new_table.duration_minutes);
+end
 
 % prep for R (log rank test done in R)
 all_x = nan(size(new_table,1),3);
