@@ -741,6 +741,21 @@ r_times = table(all_times_r(:,1),~all_times_r(:,2),all_times_r(:,3),'VariableNam
 % export table for R
 writetable(r_times,[r_data_path,'r_all_features.csv']);
 
+%% Get some times needed to observe GPT
+
+% What % of people had GPT recorded in 1st hour
+fprintf('\n%1.1f%% of people who ever had GPT had it in the first hour\n',...
+    sum(new_table.total_time_first_pst<60)/sum(new_table.gpt)*100)
+
+% How long do we need to record to get 90% of occurrences of GPT?
+pst_times = new_table.total_time_first_pst(~isnan(new_table.total_time_first_pst));
+pst_times = sort(pst_times);
+n_90_pct = ceil(0.9*length(pst_times)); %which one is 80th percentile
+mins_90_pct = pst_times(n_90_pct); % how many hours?
+fprintf('\nOf those with GPT, 90%% of them had GPT within %1.1f hours.\n',...
+    mins_90_pct/60);
+
+
 
 if do_plots
 %% Figure for percentage of patients with feature by certain times
