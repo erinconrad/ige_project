@@ -1542,6 +1542,12 @@ r_table = table(all_x(:,1),~all_x(:,2),all_x(:,3),'VariableNames',{'survtime','o
 % export table for R
 writetable(r_table,[r_data_path,'r_table_pst.csv']);
 
+%% Logistic regression
+% Only start with those variables with p < 0.1 in univariate analyses
+vars_low_p = {'number_antiseizure_drugs','vpa','gpt','gpfa','glvfa','foc_dis'};
+mdl = feature_selection(new_table,'drug_resistant',vars_low_p)
+
+
 fprintf('\n----------------------------------------------------\n');
 fprintf('End of file. All tables and figures should be saved to your results folder.\nThe log-rank test can be done in R using the data file saved to your data folder.\n\n');
 
