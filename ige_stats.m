@@ -17,13 +17,13 @@ function ige_stats
 doing_from_github = 1; % Set to 1 if running the code from the github repository (most people)
 
 % File paths
-csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-08-04_0902.csv'; % point to the data
+csv_path = 'IGEDatabase-DeidentifiedData_DATA_2020-09-29_1540.csv'; % point to the data
 results_folder = '../results/'; % point to where you want to save results
 r_data_path = '../data/'; % where to save a table of data to be used for R analysis
 
 display_random_entries = 0; % Set to 1 to display data for random patients, to double check that it agrees with data table
 
-do_plots = 0; % Set to 1 to make plots
+do_plots = 1; % Set to 1 to make plots
 
 %% Other parameters
 ige_subtype_exclusion_records = [92,125]; % patients to exclude from IGE subtype analyses given incomplete documentation
@@ -1543,9 +1543,26 @@ r_table = table(all_x(:,1),~all_x(:,2),all_x(:,3),'VariableNames',{'survtime','o
 writetable(r_table,[r_data_path,'r_table_pst.csv']);
 
 %% Logistic regression
-% Only start with those variables with p < 0.1 in univariate analyses
-vars_low_p = {'number_antiseizure_drugs','vpa','gpt','gpfa','glvfa','foc_dis'};
-mdl = feature_selection(new_table,'drug_resistant',vars_low_p)
+new_table_lr = new_table;
+
+y = new_table_lr.drug_resistant;
+X = [new_table_lr.gpt,...
+    new_table_lr.sex,new_table_lr.age_onset,...
+    new_table_lr.number_seizure_types,new_table_lr.age_at_eeg,...
+    new_table_lr.vpa];
+catvars = logical([1,...
+    1,0,...
+    0,0,...
+    1]);
+mdl = fitglm(X,y,'Distribution','binomial','CategoricalVars',catvars)
+beta = mdl.Coefficients.Estimate(2);
+or = exp(beta);
+betaCI = coefCI(mdl);
+betaCI = betaCI(2,:);
+orCI = [exp(betaCI(1)),exp(betaCI(2))];
+pval = mdl.Coefficients.pValue(2);
+fprintf(['\nLogistic regression model: OR %1.1f (%1.1f-%1.1f), p = %1.2f\n'],...
+    or,orCI(1),orCI(2),pval);
 
 
 fprintf('\n----------------------------------------------------\n');
